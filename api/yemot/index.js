@@ -725,9 +725,11 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                 const detailLines = generateGematriaDetails(current);
                 return respond(res, buildRead({
                     mbId: MB.GEMATRIA_DETAIL_INTRO,
-                    ttsText: `פירוט הגימטריה: ${detailLines.join(', ')}`,
-                    mode: 'none',
-                }) + '&' + buildGoTo('.'));
+                    ttsText: `פירוט הגימטריה: ${detailLines.join(', ')}. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                    valName: MB.AFTER_RESULT_MENU,
+                }));
             } else if (choice === '2') {
                 // תוצאה הבאה
                 if (idx + 1 < state.results.length) {
@@ -892,33 +894,152 @@ function isValidEmail(email) {
 }
 
 /**
- * בונה את תוכן הייצוא (טקסט רגיל) הכולל את כל התוצאות ופרטי הבקשה -
- * לשימוש כגוף הודעת המייל וכתוכן קובץ ה-TXT/Word המצורף.
+ * בורח (escape) תווי HTML בסיסיים - למניעת שבירת המבנה/XSS כאשר משבצים
+ * טקסט חופשי (שם, תוצאות וכו') בתוך ה-HTML של הגוף/הקובץ המצורף.
  */
-function buildExportText({ name, gender, contentType, calcType, totalGematria, results }) {
-    const lines = [];
-    lines.push('מערכת מחשבון מחמאות - תוצאות');
-    lines.push('==============================');
-    lines.push(`שם: ${name}`);
-    lines.push(`מין: ${GENDER_LABELS[gender] || gender}`);
-    lines.push(`סוג תוכן: ${CONTENT_TYPE_LABELS[contentType] || contentType}`);
-    lines.push(`סוג חישוב: ${CALC_TYPE_LABELS[calcType] || calcType}`);
+function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
+ * עיצוב HTML/CSS משותף (RTL, גופן עברי, צבעי מותג) לשימוש הן בגוף המייל
+ * והן בקובץ ה-Word המצורף (שהוא בפועל קובץ HTML עם סיומת .doc - הטריק
+ * הידוע לפתיחת "מסמך Word מעוצב" מבלי לייצר בינארי .docx אמיתי; Word/
+ * Outlook מזהים את ה-HTML לפי התוכן ופותחים אותו בעורך כמסמך רגיל).
+ */
+const EMAIL_STYLE = `
+    body { margin:0; padding:0; background:#f4f2ee; font-family:'Segoe UI','Arial Hebrew','Noto Sans Hebrew',Arial,sans-serif; }
+    .wrap { max-width:640px; margin:0 auto; padding:24px 16px; }
+    .card { background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.08); border:1px solid #e7e2d9; }
+    .header { background:#5b3a8e; color:#ffffff; padding:22px 28px; }
+    .header h1 { margin:0; font-size:20px; }
+    .header p { margin:4px 0 0; font-size:13px; opacity:0.85; }
+    .body { padding:26px 28px; color:#2c2c2c; font-size:15px; line-height:1.9; }
+    .body h2 { font-size:16px; color:#5b3a8e; margin:0 0 14px; }
+    table.details { width:100%; border-collapse:collapse; margin:10px 0 20px; }
+    table.details td { padding:8px 10px; border-bottom:1px solid #eee2d6; font-size:14px; }
+    table.details td.label { color:#7a6f5f; width:38%; font-weight:600; }
+    .total { display:inline-block; background:#f1ecfa; color:#5b3a8e; font-weight:700; padding:4px 12px; border-radius:20px; }
+    .result { padding:10px 12px; margin:6px 0; background:#faf8f4; border-radius:8px; border:1px solid #efe8db; }
+    .result .idx { color:#5b3a8e; font-weight:700; margin-left:6px; }
+    .detail { color:#7a6f5f; font-size:13px; margin-top:4px; }
+    .footer { padding:18px 28px; background:#faf8f4; color:#8a8172; font-size:12px; text-align:center; border-top:1px solid #efe8db; }
+    .footer a { color:#5b3a8e; text-decoration:none; }
+`;
+
+/**
+ * גוף המייל (HTML, RTL, מעוצב) - כולל **רק** את פרטי הבקשה שחושבה (שם,
+ * מין, סוג תוכן, סוג חישוב, גימטריה כוללת) - לא את רשימת התוצאות
+ * המלאה (זו נמצאת בקובץ המצורף בלבד, כנדרש).
+ */
+function buildEmailBodyHtml({ name, gender, contentType, calcType, totalGematria, resultsCount }) {
+    const rows = [
+        ['שם', escapeHtml(name)],
+        ['מין', escapeHtml(GENDER_LABELS[gender] || gender)],
+        ['סוג תוכן', escapeHtml(CONTENT_TYPE_LABELS[contentType] || contentType)],
+        ['סוג חישוב', escapeHtml(CALC_TYPE_LABELS[calcType] || calcType)],
+    ];
     if (calcType === 'gematria' && totalGematria !== null && totalGematria !== undefined) {
-        lines.push(`הגימטריה הכוללת של השם: ${totalGematria}`);
+        rows.push(['הגימטריה הכוללת של השם', `<span class="total">${totalGematria}</span>`]);
     }
-    lines.push(`מספר תוצאות: ${results.length}`);
-    lines.push('');
-    lines.push('התוצאות:');
-    lines.push('--------');
-    results.forEach((item, idx) => {
-        lines.push(`${idx + 1}. ${item}`);
-        if (calcType === 'gematria') {
-            lines.push(`   (${generateGematriaDetails(item).join(', ')})`);
-        }
-    });
-    lines.push('');
-    lines.push(`נשלח ע"י מערכת מחשבון מחמאות בתאריך ${new Date().toLocaleString('he-IL')}`);
-    return lines.join('\n');
+    rows.push(['מספר תוצאות שנמצאו', String(resultsCount)]);
+
+    const rowsHtml = rows.map(([label, value]) =>
+        `<tr><td class="label">${label}</td><td>${value}</td></tr>`
+    ).join('');
+
+    return `<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head><meta charset="utf-8"><style>${EMAIL_STYLE}</style></head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <h1>מערכת מחשבון מחמאות</h1>
+        <p>תוצאות החישוב שביקשת</p>
+      </div>
+      <div class="body">
+        <h2>פרטי הבקשה</h2>
+        <table class="details">${rowsHtml}</table>
+        <p>הרשימה המלאה של כל התוצאות מצורפת למייל זה כקובץ Word.</p>
+      </div>
+      <div class="footer">
+        נשלח על ידי מערכת מחשבון מחמאות &middot; פותח על ידי
+        <a href="https://twitter.com/מייבין_במקצת">‎@מייבין במקצת</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * תוכן קובץ ה"וורד" (HTML מעוצב, RTL, עם סיומת .doc) - כולל את **כל**
+ * פרטי הבקשה ורשימת התוצאות המלאה (עם פירוט גימטריה לכל תוצאה, במצב
+ * חישוב גימטריה). זהו ה-HTML-to-Word trick: Word פותח קובצי HTML בעלי
+ * סיומת .doc/.docx כמסמך רגיל, כי הוא מזהה את הפורמט לפי תוכן הקובץ
+ * (magic bytes/markup) ולא רק לפי הסיומת.
+ */
+function buildResultsWordHtml({ name, gender, contentType, calcType, totalGematria, results }) {
+    const rows = [
+        ['שם', escapeHtml(name)],
+        ['מין', escapeHtml(GENDER_LABELS[gender] || gender)],
+        ['סוג תוכן', escapeHtml(CONTENT_TYPE_LABELS[contentType] || contentType)],
+        ['סוג חישוב', escapeHtml(CALC_TYPE_LABELS[calcType] || calcType)],
+    ];
+    if (calcType === 'gematria' && totalGematria !== null && totalGematria !== undefined) {
+        rows.push(['הגימטריה הכוללת של השם', `<span class="total">${totalGematria}</span>`]);
+    }
+    rows.push(['מספר תוצאות', String(results.length)]);
+
+    const rowsHtml = rows.map(([label, value]) =>
+        `<tr><td class="label">${label}</td><td>${value}</td></tr>`
+    ).join('');
+
+    const resultsHtml = results.map((item, idx) => {
+        const detail = calcType === 'gematria'
+            ? `<div class="detail">${escapeHtml(generateGematriaDetails(item).join(', '))}</div>`
+            : '';
+        return `<div class="result"><span class="idx">${idx + 1}.</span>${escapeHtml(item)}${detail}</div>`;
+    }).join('');
+
+    return `<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+  <meta charset="utf-8">
+  <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+  <style>${EMAIL_STYLE}
+    body { background:#ffffff; }
+    .wrap { max-width:100%; padding:0; }
+    .card { border:none; border-radius:0; box-shadow:none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <h1>מערכת מחשבון מחמאות</h1>
+        <p>תוצאות מלאות</p>
+      </div>
+      <div class="body">
+        <h2>פרטי הבקשה</h2>
+        <table class="details">${rowsHtml}</table>
+        <h2>התוצאות</h2>
+        ${resultsHtml}
+      </div>
+      <div class="footer">
+        נשלח על ידי מערכת מחשבון מחמאות &middot; פותח על ידי ‎@מייבין במקצת &middot;
+        ${escapeHtml(new Date().toLocaleString('he-IL'))}
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 /**
@@ -931,6 +1052,11 @@ function buildExportText({ name, gender, contentType, calcType, totalGematria, r
  * שם התצוגה של השולח ("מערכת מחשבון מחמאות") מוגדר בתוך ה-Apps Script
  * עצמו (GmailApp.sendEmail עם הפרמטר name) - לא כאן, כדי שכתובת המייל
  * בפועל תישאר כתובת ה-Gmail/G Suite שמריץ את ה-Script (כנדרש).
+ *
+ * גוף המייל (bodyHtml) הוא HTML מעוצב (RTL) הכולל רק את פרטי הבקשה -
+ * לא את רשימת התוצאות המלאה. הרשימה המלאה נשלחת כקובץ מצורף בפורמט
+ * HTML מעוצב עם סיומת .doc (attachmentHtml) - כך ש-Word/Outlook פותחים
+ * אותו כמסמך "וורד" מעוצב, למרות שבפועל זהו קובץ HTML (טריק ידוע).
  */
 async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType, totalGematria, results }) {
     const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
@@ -940,16 +1066,21 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
         throw new Error('GOOGLE_SCRIPT_URL לא הוגדר במשתני הסביבה של Vercel');
     }
 
-    const bodyText = buildExportText({ name, gender, contentType, calcType, totalGematria, results });
+    const resultsCount = results.length;
+    const bodyHtml = buildEmailBodyHtml({ name, gender, contentType, calcType, totalGematria, resultsCount });
+    const attachmentHtml = buildResultsWordHtml({ name, gender, contentType, calcType, totalGematria, results });
     const subject = `תוצאות מחשבון מחמאות - ${name}`;
 
     const payload = {
         secret: sharedSecret,
         toEmail,
         subject,
-        bodyText,
+        bodyHtml,
+        attachmentHtml,
         senderDisplayName: 'מערכת מחשבון מחמאות',
-        fileName: `gematria-results-${Date.now()}.txt`,
+        // סיומת .doc בכוונה (לא .html) - זהו הטריק להצגת קובץ HTML מעוצב
+        // כמסמך Word: Word/Outlook פותחים HTML עם סיומת .doc כמסמך רגיל.
+        fileName: `gematria-results-${Date.now()}.doc`,
     };
 
     logStep('EMAIL_SEND_REQUEST', { toEmail, scriptUrlHost: safeHost(scriptUrl) });
