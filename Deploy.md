@@ -31,8 +31,7 @@
 3. הגדרות הפריסה:
    - **Execute as:** `Me` (אתם - כך המייל יישלח מכתובת ה-Gmail שלכם)
    - **Who has access:** `Anyone` (חובה - אחרת Vercel לא יוכל לקרוא
-     ל-Web App ותקבלו דף HTML של Google במקום JSON, בדיוק כמו הבעיה
-     שהייתה עם התמלול)
+     ל-Web App ותקבלו דף HTML של Google במקום JSON)
 4. לחצו **Deploy**.
 5. Google יבקש הרשאות (Authorize access) - אשרו עם חשבון ה-Gmail שלכם.
 6. תקבלו **Web app URL** בפורמט:
