@@ -326,6 +326,33 @@ function announceNameGematria(name) {
     });
 }
 
+
+/**
+ * מחלץ את ערך ההקשה שחזר מימות עבור read קודם.
+ * בפועל ימות לעיתים מחזיר את הערך תחת val_name המקורי, ולעיתים לאחר הודעת
+ * שגיאה/מעבר אוטומטי הערך מגיע תחת תווית אחרת או תחת שדות כלליים. לכן כל
+ * שלב קורא דרך הפונקציה הזו כדי לא להיתקע בלולאת "בחירה שגויה" בגלל שם
+ * פרמטר שונה בלבד.
+ */
+function getReadValue(query, ...preferredKeys) {
+    for (const key of preferredKeys.filter(Boolean)) {
+        const value = query[key];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value).trim();
+        }
+    }
+
+    const genericKeys = ['ApiEnterID', 'EnterID', 'ApiResult', 'Result', 'digits', 'Digits'];
+    for (const key of genericKeys) {
+        const value = query[key];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value).trim();
+        }
+    }
+
+    return '';
+}
+
 function respond(res, body) {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.status(200).send(body);
@@ -438,7 +465,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
     switch (state.step) {
 
         case 'MENU_NAME_METHOD': {
-            const choice = query[MB.MENU_NAME_INPUT];
+            const choice = getReadValue(query, MB.MENU_NAME_INPUT);
             if (choice === '1') {
                 transitionTo(stateKey, state, 'TYPE_NAME');
                 return respond(res, buildRead({
@@ -469,7 +496,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
-            const typedName = (query[MB.ASK_TYPE_NAME_TEXT] || '').trim();
+            const typedName = getReadValue(query, MB.ASK_TYPE_NAME_TEXT);
             if (!typedName) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -485,7 +512,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
         case 'RECORD_NAME': {
-            const recordingPath = query[MB.ASK_RECORD_NAME]; // נתיב/URL להקלטה בימות
+            const recordingPath = getReadValue(query, MB.ASK_RECORD_NAME); // נתיב/URL להקלטה בימות
             logStep('RECORDING_REFERENCE_RECEIVED', {
     recordingPath,
 }); 
@@ -530,7 +557,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
         }
 
         case 'CONFIRM_TRANSCRIPTION': {
-            const choice = query[MB.TRANSCRIBE_CONFIRM];
+            const choice = getReadValue(query, MB.TRANSCRIBE_CONFIRM, MB.INVALID_INPUT);
             if (choice === '1') {
                 state.name = state.pendingName;
                 delete state.pendingName;
@@ -556,7 +583,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
         // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה/הקלטה+אישור),
         // עם אפשרות לשמוע פירוט אות-אות או להמשיך לבחירת מין/סוג תוכן.
         case 'ANNOUNCE_NAME_GEMATRIA': {
-            const choice = query[MB.NAME_GEMATRIA_ANNOUNCE];
+            const choice = getReadValue(query, MB.NAME_GEMATRIA_ANNOUNCE, MB.NAME_GEMATRIA_DETAIL);
             if (choice === '1') {
                 const detailLines = generateGematriaDetails(state.name);
                 logStep('NAME_GEMATRIA_DETAIL_PLAYED', { name: state.name });
@@ -580,7 +607,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // בחירת זכר/נקבה - כפי שה-HTML דורש (select#gender) לפני החישוב
         case 'ASK_GENDER': {
-            const choice = query[MB.ASK_GENDER];
+            const choice = getReadValue(query, MB.ASK_GENDER, MB.INVALID_INPUT);
             if (choice === '1' || choice === '2') {
                 state.gender = choice === '1' ? 'male' : 'female';
                 transitionTo(stateKey, state, 'ASK_CONTENT_TYPE');
@@ -602,7 +629,8 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
         // סוג תוכן - כפי שה-HTML דורש (select#contentType)
         case 'ASK_CONTENT_TYPE': {
             const map = { '1': 'compliments', '2': 'blessings', '3': 'motivation', '4': 'sayings' };
-            const contentType = map[query[MB.ASK_CONTENT_TYPE]];
+            const rawChoice = getReadValue(query, MB.ASK_CONTENT_TYPE, MB.INVALID_INPUT);
+            const contentType = map[rawChoice];
             if (!contentType) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -623,7 +651,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // סוג חישוב - זהה לשני הכפתורים ב-HTML: "חשב גימטריה" / "חשב קונסטרוקציה"
         case 'ASK_CALC_TYPE': {
-            const choice = query[MB.ASK_CALC_TYPE];
+            const choice = getReadValue(query, MB.ASK_CALC_TYPE, MB.INVALID_INPUT);
             if (choice !== '1' && choice !== '2') {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -710,7 +738,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             }
 
             // AFTER_RESULT: קיבלנו קלט מהמשתמש (תפריט לאחר תוצאה)
-            const choice = query[MB.AFTER_RESULT_MENU] || query[MB.RESULT_ITEM];
+            const choice = getReadValue(query, MB.AFTER_RESULT_MENU, MB.RESULT_ITEM, MB.GEMATRIA_DETAIL_INTRO, MB.EMAIL_SENT_OK, MB.EMAIL_SENT_FAILED);
 
             if (choice === '1') {
                 // פירוט גימטריה (רק אם מצב חישוב = גימטריה, כמו ב-HTML)
@@ -774,7 +802,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // בקשת כתובת מייל לייצוא (לפני הקלדת הכתובת בפועל)
         case 'ASK_EMAIL_FOR_EXPORT': {
-            const choice = query[MB.ASK_EMAIL_FOR_EXPORT];
+            const choice = getReadValue(query, MB.ASK_EMAIL_FOR_EXPORT, MB.INVALID_INPUT);
             if (choice === '1') {
                 transitionTo(stateKey, state, 'TYPE_EMAIL');
                 return respond(res, buildRead({
@@ -805,7 +833,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // קליטת כתובת המייל שהוקלדה, ושליחת התוצאות אליה דרך Google Apps Script
         case 'TYPE_EMAIL': {
-            const email = (query[MB.TYPE_EMAIL] || '').trim();
+            const email = getReadValue(query, MB.TYPE_EMAIL, MB.INVALID_INPUT);
             logStep('EMAIL_TYPED', { email });
 
             if (!email || !isValidEmail(email)) {
@@ -1240,7 +1268,7 @@ async function downloadRecording(recordingRef, systemToken) {
  * בדיוק כפי שמתואר בהערות הראש של transcribe.py המקורי.
  */
 async function transcribeViaService(wavBytes) {
-    const transcribeUrl = process.env.TRANSCRIBE_SERVICE_URL || '/api/yemot/transcribe';
+    const transcribeUrl = process.env.TRANSCRIBE_SERVICE_URL || '/api/yemot/transcribe.py';
     const fullUrl = transcribeUrl.startsWith('http')
         ? transcribeUrl
         : `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : ''}${transcribeUrl}`;

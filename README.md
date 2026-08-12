@@ -42,7 +42,7 @@
 4. משתני סביבה: `GOOGLE_SCRIPT_URL` ו-`MAIL_SHARED_SECRET` **חובה** אם
    רוצים שתעבוד שליחת תוצאות למייל (ר' `google-apps-script/DEPLOY.md`).
    אופציונלי: `TRANSCRIBE_SERVICE_URL` אם תרצו להצביע לכתובת תמלול
-   חיצונית שונה מברירת המחדל (`/api/yemot/transcribe` באותו דומיין).
+   חיצונית שונה מברירת המחדל (`/api/yemot/transcribe.py` באותו דומיין).
 5. לאחר הפריסה תקבלו כתובת כמו:
    `https://your-project.vercel.app/api/yemot/index`
 
