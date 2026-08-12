@@ -138,10 +138,6 @@ function generateSpokenGematriaDetails(text) {
         return `האות ${letterName} שווה ${numberToHebrewWords(value)}`;
     });
     lines.push(`סך הכל גימטריה ${numberToHebrewWords(calculateWordGematria(text))}`);
-        if (char.trim() === '') return 'רווח';
-        return `האות ${char} שווה ${gematriaMap[char] || 0}`;
-    });
-    lines.push(`סך הכל גימטריה ${calculateWordGematria(text)}`);
     return lines;
 }
 
@@ -633,10 +629,6 @@ async function handleStep(state, query, stateKey, res, did) {
                     maxDigits: 1,
                     valName: MB.NAME_GEMATRIA_ANNOUNCE,
                 }));
-
-                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join('. ')}`,
-                    mode: 'none',
-                }) + '&' + buildGoTo('.'));
             } else if (choice === '2') {
                 transitionTo(stateKey, state, 'ASK_GENDER');
                 return respond(res, buildRead({
