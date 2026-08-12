@@ -265,6 +265,24 @@ function setState(callId, state) {
 }
 
 /**
+ * מייצר val_name ייחודי לכל read בשיחה נתונה.
+ * לפי תיעוד ימות (מודול API, סעיף "הנתונים הנשלחים לשרת"): אסור להשתמש
+ * ב-read באותו val_name פעמיים באותה שיחה, כי ימות צובר את כל הפרמטרים
+ * שנשלחו אי-פעם באותה שיחה ושולח את כולם מחדש בכל בקשה - שימוש חוזר
+ * באותו val_name יוצר התנגשות/כפילות ועלול לגרום לכך שהשרת יראה את
+ * הערך הישן במקום התשובה החדשה (בפועל: השלב "נתקע" ולא מתקדם גם
+ * כשהמשתמש הקיש תשובה תקינה). לכן כל read מקבל val_name ייחודי המבוסס
+ * על בסיס קבוע (mbId/valName) בתוספת מונה עולה לכל שיחה, ו-state שומר
+ * את שם התווית האחרונה שנשלחה כדי ש-getReadValue ידע תחת איזה שם לחפש.
+ */
+function nextValName(state, base) {
+    state.readSeq = (state.readSeq || 0) + 1;
+    const unique = `${base}_${state.readSeq}`;
+    state.lastValName = unique;
+    return unique;
+}
+
+/**
  * שומר state ובנוסף רושם ללוג (Vercel) את המעבר בין שלבים בשיחה -
  * שם השלב הקודם ושם השלב הבא - כך שכל מעבר במכונת המצבים נראה בבירור
  * בלוגים של Vercel (טאב Logs/Runtime Logs עבור api/yemot/index).
@@ -318,8 +336,12 @@ function esc(text) {
  * נוסף - במקרה זה לא נשלחת בקשת read אמיתית, ולכן משתמשים ב-id_list_message
  * עם שרשור go_to_folder כדי להמשיך את הזרימה, ראה buildAnnounce).
  */
-function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, valName, typingMode }) {
-    const label = valName || mbId;
+function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, valName, typingMode, state }) {
+    // אם הועבר state - מייצרים val_name ייחודי לכל read (ר' הערה ב-nextValName).
+    // אחרת (למשל בקשות ללא state, כגון הודעת שגיאה גנרית לפני שיש state) -
+    // נופלים חזרה על ההתנהגות הקודמת (valName מפורש או mbId).
+    const baseLabel = valName || mbId;
+    const label = state ? nextValName(state, baseLabel) : baseLabel;
     const message = `t-${esc(ttsText)}`;
     let options;
     if (mode === 'tap') {
@@ -358,13 +380,14 @@ function buildHangup() {
  * נשלחת אחרי הקלדת שם - כנדרש שיוכרז
  * בכל שלב מה הגימטריה שחושבה, גם אם בהמשך לא יימצאו תוצאות תוכן מתאימות.
  */
-function announceNameGematria(name) {
+function announceNameGematria(name, state) {
     const total = calculateWordGematria(name);
     return buildRead({
         mbId: MB.NAME_GEMATRIA_ANNOUNCE,
         ttsText: `הגימטריה של השם ${name} היא ${total}. לשמיעת פירוט הגימטריה הקישו 1. להמשך הקישו 2.`,
         mode: 'tap',
         maxDigits: 1,
+        state,
     });
 }
 
@@ -376,7 +399,18 @@ function announceNameGematria(name) {
  * שלב קורא דרך הפונקציה הזו כדי לא להיתקע בלולאת "בחירה שגויה" בגלל שם
  * פרמטר שונה בלבד.
  */
-function getReadValue(query, ...preferredKeys) {
+function getReadValue(state, query, ...preferredKeys) {
+    // עדיפות ראשונה: התווית הייחודית שנשלחה ב-read האחרון (state.lastValName).
+    // זהו המקור האמין ביותר, כי הוא נקבע ע"י הקוד עצמו ולא מנחש שם קבוע -
+    // ומונע את הבאג של "נתקע באותו שלב" שנגרם משימוש חוזר באותו val_name
+    // (ר' הערה ב-nextValName/buildRead).
+    if (state && state.lastValName) {
+        const value = query[state.lastValName];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value).trim();
+        }
+    }
+
     for (const key of preferredKeys.filter(Boolean)) {
         const value = query[key];
         if (value !== undefined && value !== null && String(value).trim() !== '') {
@@ -465,6 +499,7 @@ module.exports = async (req, res) => {
                 maxDigits: 30,
                 minDigits: 1,
                 typingMode: 'HebrewKeyboard',
+                state,
             }));
         }
 
@@ -494,7 +529,7 @@ async function handleStep(state, query, stateKey, res, did) {
 
 
         case 'MENU_NAME_METHOD': {
-            const choice = getReadValue(query, MB.MENU_NAME_INPUT);
+            const choice = getReadValue(state, query, MB.MENU_NAME_INPUT);
             if (choice === '1') {
                 transitionTo(stateKey, state, 'TYPE_NAME');
                 return respond(res, buildRead({
@@ -507,6 +542,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     // להקליד שם בעברית באמצעות מקשי הטלפון (T9-כמו-הקלדת-SMS ישנה),
                     // במקום הקשות ספרות רגילות בלבד.
                     typingMode: 'HebrewKeyboard',
+                    state,
                 }));
             } else if (choice === '2') {
                 transitionTo(stateKey, state, 'RECORD_NAME');
@@ -528,7 +564,7 @@ async function handleStep(state, query, stateKey, res, did) {
         
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
-            const typedName = getReadValue(query, MB.ASK_TYPE_NAME_TEXT);
+            const typedName = getReadValue(state, query, MB.ASK_TYPE_NAME_TEXT);
             if (!typedName) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -539,7 +575,7 @@ async function handleStep(state, query, stateKey, res, did) {
             state.name = typedName;
             transitionTo(stateKey, state, 'ANNOUNCE_NAME_GEMATRIA');
             logStep('NAME_ACQUIRED', { method: 'typed', name: typedName });
-            return respond(res, announceNameGematria(typedName));
+            return respond(res, announceNameGematria(typedName, state));
         }
 
         // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה),
@@ -547,7 +583,7 @@ async function handleStep(state, query, stateKey, res, did) {
 
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
         case 'RECORD_NAME': {
-            const recordingPath = getReadValue(query, MB.ASK_RECORD_NAME); // נתיב/URL להקלטה בימות
+            const recordingPath = getReadValue(state, query, MB.ASK_RECORD_NAME); // נתיב/URL להקלטה בימות
             logStep('RECORDING_REFERENCE_RECEIVED', {
     recordingPath,
 }); 
@@ -588,17 +624,18 @@ async function handleStep(state, query, stateKey, res, did) {
                 ttsText: `השם שזוהה הוא ${transcribedText}. להמשך עם שם זה הקישו 1. להקלטה חוזרת הקישו 2.`,
                 mode: 'tap',
                 maxDigits: 1,
+                state,
             }));
         }
 
         case 'CONFIRM_TRANSCRIPTION': {
-            const choice = getReadValue(query, MB.TRANSCRIBE_CONFIRM, MB.INVALID_INPUT);
+            const choice = getReadValue(state, query, MB.TRANSCRIBE_CONFIRM, MB.INVALID_INPUT);
             if (choice === '1') {
                 state.name = state.pendingName;
                 delete state.pendingName;
                 transitionTo(stateKey, state, 'ANNOUNCE_NAME_GEMATRIA');
                 logStep('NAME_ACQUIRED', { method: 'recorded_transcribed', name: state.name });
-                return respond(res, announceNameGematria(state.name));
+                return respond(res, announceNameGematria(state.name, state));
             } else if (choice === '2') {
                 transitionTo(stateKey, state, 'RECORD_NAME');
                 return respond(res, buildRead({
@@ -612,13 +649,14 @@ async function handleStep(state, query, stateKey, res, did) {
                 ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
                 mode: 'tap',
                 maxDigits: 1,
+                state,
             }));
         }
 
         // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה/הקלטה+אישור),
         // עם אפשרות לשמוע פירוט אות-אות או להמשיך לבחירת מין/סוג תוכן.
         case 'ANNOUNCE_NAME_GEMATRIA': {
-            const choice = getReadValue(query, MB.NAME_GEMATRIA_ANNOUNCE, MB.NAME_GEMATRIA_DETAIL);
+            const choice = getReadValue(state, query, MB.NAME_GEMATRIA_ANNOUNCE, MB.NAME_GEMATRIA_DETAIL);
             if (choice === '1') {
                 const detailLines = generateSpokenGematriaDetails(state.name);
                 logStep('NAME_GEMATRIA_DETAIL_PLAYED', { name: state.name });
@@ -628,6 +666,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     mode: 'tap',
                     maxDigits: 1,
                     valName: MB.NAME_GEMATRIA_ANNOUNCE,
+                    state,
                 }));
             } else if (choice === '2') {
                 transitionTo(stateKey, state, 'ASK_GENDER');
@@ -636,15 +675,16 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: 'לחישוב עבור זכר הקישו 1. לחישוב עבור נקבה הקישו 2.',
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             }
             // כניסה ראשונה לשלב זה (עדיין לא הגיע קלט על תפריט זה) - נשמיע שוב
-            return respond(res, announceNameGematria(state.name));
+            return respond(res, announceNameGematria(state.name, state));
         }
 
         // בחירת זכר/נקבה - כפי שה-HTML דורש (select#gender) לפני החישוב
         case 'ASK_GENDER': {
-            const choice = getReadValue(query, MB.ASK_GENDER, MB.INVALID_INPUT);
+            const choice = getReadValue(state, query, MB.ASK_GENDER, MB.INVALID_INPUT);
             if (choice === '1' || choice === '2') {
                 state.gender = choice === '1' ? 'male' : 'female';
                 transitionTo(stateKey, state, 'ASK_CONTENT_TYPE');
@@ -653,6 +693,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: 'למחמאות הקישו 1. לברכות הקישו 2. למשפטי מוטיבציה הקישו 3. לפתגמים הקישו 4.',
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             }
             return respond(res, buildRead({
@@ -660,13 +701,14 @@ async function handleStep(state, query, stateKey, res, did) {
                 ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
                 mode: 'tap',
                 maxDigits: 1,
+                state,
             }));
         }
 
         // סוג תוכן - כפי שה-HTML דורש (select#contentType)
         case 'ASK_CONTENT_TYPE': {
             const map = { '1': 'compliments', '2': 'blessings', '3': 'motivation', '4': 'sayings' };
-            const rawChoice = getReadValue(query, MB.ASK_CONTENT_TYPE, MB.INVALID_INPUT);
+            const rawChoice = getReadValue(state, query, MB.ASK_CONTENT_TYPE, MB.INVALID_INPUT);
             const contentType = map[rawChoice];
             if (!contentType) {
                 return respond(res, buildRead({
@@ -674,6 +716,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             }
             state.contentType = contentType;
@@ -683,18 +726,20 @@ async function handleStep(state, query, stateKey, res, did) {
                 ttsText: 'לחישוב לפי גימטריה הקישו 1. לחישוב לפי קונסטרוקציה (אותיות השם) הקישו 2.',
                 mode: 'tap',
                 maxDigits: 1,
+                state,
             }));
         }
 
         // סוג חישוב - זהה לשני הכפתורים ב-HTML: "חשב גימטריה" / "חשב קונסטרוקציה"
         case 'ASK_CALC_TYPE': {
-            const choice = getReadValue(query, MB.ASK_CALC_TYPE, MB.INVALID_INPUT);
+            const choice = getReadValue(state, query, MB.ASK_CALC_TYPE, MB.INVALID_INPUT);
             if (choice !== '1' && choice !== '2') {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
                     ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             }
             state.calcType = choice === '1' ? 'gematria' : 'construction';
@@ -775,7 +820,7 @@ async function handleStep(state, query, stateKey, res, did) {
             }
 
             // AFTER_RESULT: קיבלנו קלט מהמשתמש (תפריט לאחר תוצאה)
-            const choice = getReadValue(query, MB.AFTER_RESULT_MENU, MB.RESULT_ITEM, MB.GEMATRIA_DETAIL_INTRO, MB.EMAIL_SENT_OK, MB.EMAIL_SENT_FAILED);
+            const choice = getReadValue(state, query, MB.AFTER_RESULT_MENU, MB.RESULT_ITEM, MB.GEMATRIA_DETAIL_INTRO, MB.EMAIL_SENT_OK, MB.EMAIL_SENT_FAILED);
 
             if (choice === '1') {
                 // פירוט גימטריה (רק אם מצב חישוב = גימטריה, כמו ב-HTML)
@@ -785,6 +830,7 @@ async function handleStep(state, query, stateKey, res, did) {
                         ttsText: 'פירוט גימטריה זמין רק במצב חישוב גימטריה.',
                         mode: 'tap',
                         maxDigits: 1,
+                        state,
                     }));
                 }
                 const detailLines = generateSpokenGematriaDetails(current);
@@ -794,6 +840,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     mode: 'tap',
                     maxDigits: 1,
                     valName: MB.AFTER_RESULT_MENU,
+                    state,
                 }));
             } else if (choice === '7') {
                 // תוצאה קודמת
@@ -812,6 +859,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     mode: 'tap',
                     maxDigits: 1,
                     valName: MB.AFTER_RESULT_MENU,
+                    state,
                 }));
             } else if (choice === '9') {
                 // תוצאה הבאה
@@ -830,6 +878,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     mode: 'tap',
                     maxDigits: 1,
                     valName: MB.AFTER_RESULT_MENU,
+                    state,
                 }));
             } else if (choice === '3') {
                 // ייצוא כל התוצאות ושליחתן למייל
@@ -839,6 +888,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: 'לשליחת כל התוצאות לכתובת מייל הקישו 1. לחזרה לתפריט התוצאות הקישו 2.',
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             } else if (choice === '0') {
                 clearState(stateKey);
@@ -854,12 +904,13 @@ async function handleStep(state, query, stateKey, res, did) {
                 ttsText: afterResultMenuText(),
                 mode: 'tap',
                 maxDigits: 1,
+                state,
             }));
         }
 
         // בקשת כתובת מייל לייצוא (לפני הקלדת הכתובת בפועל)
         case 'ASK_EMAIL_FOR_EXPORT': {
-            const choice = getReadValue(query, MB.ASK_EMAIL_FOR_EXPORT, MB.INVALID_INPUT);
+            const choice = getReadValue(state, query, MB.ASK_EMAIL_FOR_EXPORT, MB.INVALID_INPUT);
             if (choice === '1') {
                 transitionTo(stateKey, state, 'TYPE_EMAIL');
                 return respond(res, buildRead({
@@ -870,6 +921,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     minDigits: 3,
                     // מודול הקלדת טקסט של ימות במצב הקלדת כתובת מייל
                     typingMode: 'EmailKeyboard',
+                    state,
                 }));
             } else if (choice === '2') {
                 transitionTo(stateKey, state, 'AFTER_RESULT');
@@ -878,6 +930,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: afterResultMenuText(),
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             }
             return respond(res, buildRead({
@@ -885,12 +938,13 @@ async function handleStep(state, query, stateKey, res, did) {
                 ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
                 mode: 'tap',
                 maxDigits: 1,
+                state,
             }));
         }
 
         // קליטת כתובת המייל שהוקלדה, ושליחת התוצאות אליה דרך Google Apps Script
         case 'TYPE_EMAIL': {
-            const email = getReadValue(query, MB.TYPE_EMAIL, MB.INVALID_INPUT);
+            const email = getReadValue(state, query, MB.TYPE_EMAIL, MB.INVALID_INPUT);
             logStep('EMAIL_TYPED', { email });
 
             if (!email || !isValidEmail(email)) {
@@ -901,6 +955,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     maxDigits: 60,
                     minDigits: 3,
                     typingMode: 'EmailKeyboard',
+                    state,
                 }));
             }
 
@@ -921,6 +976,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. ${afterResultMenuText()}`,
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             } catch (err) {
                 console.error('Email export error:', err);
@@ -931,6 +987,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: 'אירעה שגיאה בשליחת המייל, אנא נסו שוב מאוחר יותר. לתפריט התוצאות הקישו כל מקש.',
                     mode: 'tap',
                     maxDigits: 1,
+                    state,
                 }));
             }
         }
