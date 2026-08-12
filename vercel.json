@@ -3,10 +3,6 @@
     "api/yemot/index.js": {
       "memory": 512,
       "maxDuration": 30
-    },
-    "api/yemot/transcribe.py": {
-      "memory": 512,
-      "maxDuration": 30
     }
   }
 }

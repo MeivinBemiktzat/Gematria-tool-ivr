@@ -5,28 +5,19 @@
  * וכל חישובי הגימטריה/קונסטרוקציה - מועתקים בדיוק מה-HTML שסופק (index.html),
  * ללא שינוי בכללי החישוב.
  *
- * קובץ התמלול (transcribe.py) נפרד לחלוטין ואחראי רק על המרת הקלטה לטקסט.
- * קובץ זה קורא לו ב-fetch פנימי (POST) עם בייטי ה-wav, בדיוק כפי שמתואר
- * בהערות של transcribe.py המקורי ("הקוד ב-api/yemot/index.js (Node.js)
- * מוריד את ההקלטה מימות ושולח את בייטי ה-wav הגולמיים ל-endpoint הזה").
- *
  * --------------------------------------------------------------------------
- * הגדרת השלוחה (ext.ini) - חובה לכל מערכת בנפרד, ללא עריכת קוד:
+ * הגדרת השלוחה (ext.ini):
  * --------------------------------------------------------------------------
  *   type=api
  *   api_link=https://<הדומיין-שלכם-ב-Vercel>/api/yemot/index
- *   api_token=<הטוקן המתקדם של המערכת שלכם ("טוקן מערכת" בהגדרות
- *              יומן/מערכת בממשק הניהול של ימות - NOT מערכת:סיסמה>
  *   api_call_id_send=yes
  *   api_did_send=yes
  *   api_phone_send=yes
  *   api_extension_send=yes
  *
- * הטוקן המתקדם מגיע בכל קריאה מימות בפרמטר ApiToken (או Token, תלוי גרסת
- * מערכת) - הקוד קורא את שני השמות האפשריים ומאמת מול api_token שהוגדר
- * בשלוחה עצמה בממשק הניהול (לא במשתני סביבה!) - כך שאותו קוד עובד בכל
- * מערכת ימות בלי לערוך שורת קוד אחת. הקובץ מזהה את "המערכת" (הלקוח) לפי
- * ApiDID (מספר ה-DID שהתקשרו אליו) ומחזיק state נפרד לכל (DID + CallId).
+ * אין צורך בטוקן מערכת: אין הורדת הקלטות ואין קריאה ל-API של ימות.
+ * הקוד מזהה את השיחה לפי ApiDID + ApiCallId בלבד ומעביר את המתקשר מיד
+ * להקלדת שם במודול HebrewKeyboard.
  *
  * --------------------------------------------------------------------------
  * הודעות מערכת (MB) - ראו MESSAGES.md לרשימה המלאה ולשמות הקבצים המדויקים.
@@ -34,24 +25,21 @@
  * מוקלט (MBxxxx.wav) לבין טקסט TTS בתוך תגובת read/id_list_message.
  * הבחירה בין קובץ (f-) לטקסט (t-) היא של הקוד ששולח את התגובה. קוד זה
  * שולח כרגע תמיד TTS (t-...) כדי להבטיח שהשלוחה תעבוד גם ללא קבצי
- * הקלטה מועלים. אם בעתיד יועלו קבצי MBxxxx.wav לשלוחה ורוצים שיושמעו
+ * הודעה מועלים. אם בעתיד יועלו קבצי MBxxxx.wav לשלוחה ורוצים שיושמעו
  * במקום ה-TTS, יש להחליף את ההודעה הרלוונטית ל-f-MBxxxx באופן מפורש.
  * --------------------------------------------------------------------------
  */
 
 'use strict';
 
-// ============================================================================
+// 
+=========================================================================
 // קבועים - הודעות המערכת (מזהי MB, ראו MESSAGES.md)
 // ============================================================================
 
 const MB = {
     WELCOME: 'MB1001',              // "ברוכים הבאים למחשבון מחמאות..."
-    MENU_NAME_INPUT: 'MB1002',      // תפריט ראשי: הקלדה/הקלטה
     ASK_TYPE_NAME_TEXT: 'MB1003',   // "אנא הקלידו את שמכם וסיימו בסולמית"
-    ASK_RECORD_NAME: 'MB1004',      // "אנא הקליטו את שמכם ובסיום הקישו סולמית"
-    TRANSCRIBE_FAILED: 'MB1005',    // "לא הצלחנו לזהות את השם בהקלטה, אנא נסו שוב"
-    TRANSCRIBE_CONFIRM: 'MB1006',   // "השם שזוהה הוא ... להמשך הקישו 1, להקלטה חוזרת הקישו 2"
     ASK_GENDER: 'MB1007',           // "לחישוב עבור זכר הקישו 1, עבור נקבה הקישו 2"
     ASK_CONTENT_TYPE: 'MB1008',     // "למחמאות הקישו 1, לברכות 2, למשפטי מוטיבציה 3, לפתגמים 4"
     ASK_CALC_TYPE: 'MB1009',        // "לחישוב גימטריה הקישו 1, לחישוב קונסטרוקציה הקישו 2"
@@ -270,7 +258,7 @@ function esc(text) {
  *   val_name,re_enter_if_exists,max_digits,min_digits,sec_wait,
  *   typing_playback_mode,block_asterisk_key,block_zero_key,
  *   replace_char,digits_allowed,amount_attempts,read_answer,empty_val
- * mode: 'tap' (הקשה) | 'record' (הקלטה) | 'none' (השמעה בלבד, ללא קלט
+ * mode: 'tap' (הקשה) | 'none' (השמעה בלבד, ללא קלט
  * נוסף - במקרה זה לא נשלחת בקשת read אמיתית, ולכן משתמשים ב-id_list_message
  * עם שרשור go_to_folder כדי להמשיך את הזרימה, ראה buildAnnounce).
  */
@@ -284,8 +272,6 @@ function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, 
         // עברית של ימות - ר' תיעוד מודול ה-API, "הערך השישי (הקשה)") | 'EmailKeyboard'
         // (מקלדת הקלדת כתובת מייל של ימות).
         options = `${label},,${maxDigits},${minDigits},,${typingMode || 'No'}`;
-    } else if (mode === 'record') {
-        options = `${label},,record`;
     } else {
         // אין קלט נוסף לבקש - זו למעשה השמעת הודעה בלבד, לא read אמיתי
         return buildAnnounce({ ttsText });
@@ -313,7 +299,7 @@ function buildHangup() {
 /**
  * בונה תגובה המכריזה על הגימטריה הכוללת של השם עצמו (בטרם בחירת מין/סוג
  * תוכן/סוג חישוב), ומציעה תפריט: 1 = שמיעת פירוט הגימטריה, 2 = המשך.
- * נשלחת הן אחרי הקלדת שם והן אחרי אישור שם שתומלל מהקלטה - כנדרש שיוכרז
+ * נשלחת אחרי הקלדת שם - כנדרש שיוכרז
  * בכל שלב מה הגימטריה שחושבה, גם אם בהמשך לא יימצאו תוצאות תוכן מתאימות.
  */
 function announceNameGematria(name) {
@@ -378,20 +364,6 @@ function logStep(eventName, details = {}) {
 }
 
 // ============================================================================
-// אימות טוקן מתקדם (system token) - מוגדר בהגדרות השלוחה בכל מערכת בנפרד,
-// לא בקוד ולא במשתני סביבה. הקוד קורא את הטוקן שהמערכת שולחת בבקשה
-// ומאמת מולו (השוואה בלבד - לכל מערכת יש טוקן משלה, מוגדר בממשק הניהול
-// שלה תחת הגדרות השלוחה -> "טוקן מתקדם"). כדי לתמוך בריבוי מערכות בלי
-// לגעת בקוד, אנחנו לא בודקים טוקן קבוע מראש - אלא בודקים שהבקשה מגיעה
-// מתוך שלוחת type=api שהוגדרה כראוי (הטוקן חוזר בכל בקשה מאותה שלוחה
-// ומזהה את המערכת השולחת יחד עם ApiDID).
-// ============================================================================
-
-function extractSystemToken(query) {
-    return query.ApiToken || query.Token || query.token || null;
-}
-
-// ============================================================================
 // Handler ראשי
 // ============================================================================
 
@@ -402,11 +374,9 @@ module.exports = async (req, res) => {
         const callId = query.ApiCallId || query.CallId;
         const did = query.ApiDID || query.DID || 'default';
         const extension = query.ApiExtension || query.Extension || '';
-        const systemToken = extractSystemToken(query);
 
         logStep('REQUEST_RECEIVED', {
             callId, did, extension,
-            hasToken: Boolean(systemToken),
             queryKeys: Object.keys(query),
         });
 
@@ -420,29 +390,31 @@ module.exports = async (req, res) => {
         }
 
         // מזהה שיחה ייחודי הכולל DID, כך שאותו קוד תומך בריבוי מערכות
-        // (טוקנים שונים) ללא כל שינוי - state נפרד לכל (DID, CallId).
-        const stateKey = `${did}:${callId}:${systemToken || ''}`;
+        // ללא טוקן מערכת - state נפרד לכל (DID, CallId).
+        const stateKey = `${did}:${callId}`;
 
         let state = getState(stateKey);
 
         // ------------------------------------------------------------------
-        // כניסה ראשונה לשלוחה - הצגת תפריט ראשי לבחירת שיטת הזנת שם
+        // כניסה ראשונה לשלוחה - מעבר מיידי להקלדת שם
         // ------------------------------------------------------------------
         if (!state) {
-            state = { step: 'MENU_NAME_METHOD' };
+            state = { step: 'TYPE_NAME' };
             setState(stateKey, state);
             logStep('NEW_CALL_STARTED', { stateKey });
             return respond(res, buildRead({
-                mbId: MB.MENU_NAME_INPUT,
-                ttsText: 'ברוכים הבאים למחשבון מחמאות. להקלדת שם באמצעות המקלדת הקישו 1. להקלטת שם הקישו 2.',
+                mbId: MB.ASK_TYPE_NAME_TEXT,
+                ttsText: 'ברוכים הבאים למחשבון מחמאות. אנא הקלידו את שמכם באמצעות מקשי הפלאפון, בין אות לאות הקישו סולמית, ובסיום ההקלדה הקישו כוכבית וסולמית.',
                 mode: 'tap',
-                maxDigits: 1,
+                maxDigits: 30,
+                minDigits: 1,
+                typingMode: 'HebrewKeyboard',
             }));
         }
 
         logStep('STEP_ENTERED', { stateKey, step: state.step });
 
-        return await handleStep(state, query, stateKey, res, did, systemToken);
+        return await handleStep(state, query, stateKey, res, did);
 
     } catch (err) {
         console.error('IVR error:', err);
@@ -461,7 +433,7 @@ module.exports = async (req, res) => {
 // שהוקלד/הוקלט תחת אותו שם בפרמטרי הבקשה הבאה.
 // ============================================================================
 
-async function handleStep(state, query, stateKey, res, did, systemToken) {
+async function handleStep(state, query, stateKey, res, did) {
     switch (state.step) {
 
         case 'MENU_NAME_METHOD': {
@@ -494,6 +466,9 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             }) + '&' + buildGoTo('/'));
         }
 
+
+        
+        
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
             const typedName = getReadValue(query, MB.ASK_TYPE_NAME_TEXT);
@@ -510,6 +485,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             return respond(res, announceNameGematria(typedName));
         }
 
+        // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה),
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
         case 'RECORD_NAME': {
             const recordingPath = getReadValue(query, MB.ASK_RECORD_NAME); // נתיב/URL להקלטה בימות
@@ -702,7 +678,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             });
 
             if (results.length === 0) {
-                transitionTo(stateKey, state, 'MENU_NAME_METHOD_END');
+                transitionTo(stateKey, state, 'END_CALL');
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
                     ttsText: 'לא נמצאו תוצאות מתאימות לשם זה.',
@@ -878,7 +854,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             }
         }
 
-        case 'MENU_NAME_METHOD_END': {
+        case 'END_CALL': {
             clearState(stateKey);
             return respond(res, buildRead({
                 mbId: MB.GOODBYE,
@@ -1135,7 +1111,7 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
     } catch (parseErr) {
         // Apps Script Web Apps מחזירים לעתים HTML (למשל דף התחברות/הרשאה)
         // אם ה-deployment לא הוגדר כ"כל אחד" - זה בדיוק אותו סוג בעיה
-        // שגרמה לשגיאת ה-JSON בתמלול, ולכן חשוב לתעד את זה בבירור.
+        // ולכן חשוב לתעד את זה בבירור.
         throw new Error(
             `שירות שליחת המייל (Google Apps Script) החזיר תגובה לא תקינה ` +
             `(סטטוס ${response.status}). ייתכן שה-Web App לא פרוס עם הרשאת ` +
@@ -1152,6 +1128,7 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
 function safeHost(url) {
     try { return new URL(url).host; } catch (e) { return 'invalid-url'; }
 }
+
 
 // ============================================================================
 // אינטגרציה עם ימות: הורדת ההקלטה ושליחה לתמלול
@@ -1309,6 +1286,9 @@ async function transcribeViaService(wavBytes) {
             `אינה פרוסה כראוי או נכשלה - יש לבדוק את הלוגים ב-Vercel עבור api/yemot/transcribe.`
         );
     }
+  
+ 
+  
 
     let data;
     try {
