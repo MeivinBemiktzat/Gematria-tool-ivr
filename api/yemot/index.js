@@ -32,7 +32,8 @@
 
 'use strict';
 
-// ============================================================================
+// 
+=========================================================================
 // קבועים - הודעות המערכת (מזהי MB, ראו MESSAGES.md)
 // ============================================================================
 
@@ -435,6 +436,39 @@ module.exports = async (req, res) => {
 async function handleStep(state, query, stateKey, res, did) {
     switch (state.step) {
 
+        case 'MENU_NAME_METHOD': {
+            const choice = getReadValue(query, MB.MENU_NAME_INPUT);
+            if (choice === '1') {
+                transitionTo(stateKey, state, 'TYPE_NAME');
+                return respond(res, buildRead({
+                    mbId: MB.ASK_TYPE_NAME_TEXT,
+                    ttsText: 'אנא הקלידו את שמכם באמצעות מקשי הפלאפון, בין אות לאות הקישו סולמית, ובסיום ההקלדה הקישו כוכבית וסולמית.',
+                    mode: 'tap',
+                    maxDigits: 30,
+                    minDigits: 1,
+                    // מודול הקלדת טקסט של ימות (HebrewKeyboard) - מאפשר למתקשר
+                    // להקליד שם בעברית באמצעות מקשי הטלפון (T9-כמו-הקלדת-SMS ישנה),
+                    // במקום הקשות ספרות רגילות בלבד.
+                    typingMode: 'HebrewKeyboard',
+                }));
+            } else if (choice === '2') {
+                transitionTo(stateKey, state, 'RECORD_NAME');
+                return respond(res, buildRead({
+                    mbId: MB.ASK_RECORD_NAME,
+                    ttsText: 'אנא הקליטו את שמכם, ובסיום ההקלטה הקישו סולמית.',
+                    mode: 'record',
+                }));
+            }
+            return respond(res, buildRead({
+                mbId: MB.INVALID_INPUT,
+                ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
+                mode: 'none',
+            }) + '&' + buildGoTo('/'));
+        }
+
+
+        
+        
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
             const typedName = getReadValue(query, MB.ASK_TYPE_NAME_TEXT);
@@ -452,6 +486,77 @@ async function handleStep(state, query, stateKey, res, did) {
         }
 
         // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה),
+        // שלוחה 2: הקלטת שם -> תמלול -> אישור
+        case 'RECORD_NAME': {
+            const recordingPath = getReadValue(query, MB.ASK_RECORD_NAME); // נתיב/URL להקלטה בימות
+            logStep('RECORDING_REFERENCE_RECEIVED', {
+    recordingPath,
+}); 
+            if (!recordingPath) {
+                return respond(res, buildRead({
+                    mbId: MB.INVALID_INPUT,
+                    ttsText: 'לא התקבלה הקלטה, אנא נסו שוב.',
+                    mode: 'none',
+                }) + '&' + buildGoTo('/'));
+            }
+
+            let transcribedText = '';
+            try {
+                logStep('DOWNLOAD_RECORDING_START', { recordingPath });
+                const wavBytes = await downloadRecording(recordingPath, systemToken);
+                logStep('DOWNLOAD_RECORDING_DONE', { bytes: wavBytes.length });
+                transcribedText = await transcribeViaService(wavBytes);
+                logStep('TRANSCRIPTION_DONE', { transcribedText });
+            } catch (err) {
+                console.error('Transcription error:', err);
+                logStep('TRANSCRIPTION_ERROR', { message: err.message });
+                transcribedText = '';
+            }
+
+            if (!transcribedText) {
+                transitionTo(stateKey, state, 'RECORD_NAME');
+                return respond(res, buildRead({
+                    mbId: MB.TRANSCRIBE_FAILED,
+                    ttsText: 'לא הצלחנו לזהות את השם בהקלטה. אנא הקליטו שוב את שמכם ובסיום הקישו סולמית.',
+                    mode: 'record',
+                }));
+            }
+
+            state.pendingName = transcribedText;
+            transitionTo(stateKey, state, 'CONFIRM_TRANSCRIPTION');
+            return respond(res, buildRead({
+                mbId: MB.TRANSCRIBE_CONFIRM,
+                ttsText: `השם שזוהה הוא ${transcribedText}. להמשך עם שם זה הקישו 1. להקלטה חוזרת הקישו 2.`,
+                mode: 'tap',
+                maxDigits: 1,
+            }));
+        }
+
+        case 'CONFIRM_TRANSCRIPTION': {
+            const choice = getReadValue(query, MB.TRANSCRIBE_CONFIRM, MB.INVALID_INPUT);
+            if (choice === '1') {
+                state.name = state.pendingName;
+                delete state.pendingName;
+                transitionTo(stateKey, state, 'ANNOUNCE_NAME_GEMATRIA');
+                logStep('NAME_ACQUIRED', { method: 'recorded_transcribed', name: state.name });
+                return respond(res, announceNameGematria(state.name));
+            } else if (choice === '2') {
+                transitionTo(stateKey, state, 'RECORD_NAME');
+                return respond(res, buildRead({
+                    mbId: MB.ASK_RECORD_NAME,
+                    ttsText: 'אנא הקליטו שוב את שמכם, ובסיום הקישו סולמית.',
+                    mode: 'record',
+                }));
+            }
+            return respond(res, buildRead({
+                mbId: MB.INVALID_INPUT,
+                ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
+                mode: 'tap',
+                maxDigits: 1,
+            }));
+        }
+
+        // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה/הקלטה+אישור),
         // עם אפשרות לשמוע פירוט אות-אות או להמשיך לבחירת מין/סוג תוכן.
         case 'ANNOUNCE_NAME_GEMATRIA': {
             const choice = getReadValue(query, MB.NAME_GEMATRIA_ANNOUNCE, MB.NAME_GEMATRIA_DETAIL);
@@ -1022,4 +1127,178 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
 
 function safeHost(url) {
     try { return new URL(url).host; } catch (e) { return 'invalid-url'; }
+}
+
+
+// ============================================================================
+// אינטגרציה עם ימות: הורדת ההקלטה ושליחה לתמלול
+// ============================================================================
+
+/**
+ * מוריד את בייטי ה-wav של ההקלטה מימות המשיח.
+ * recordingRef הוא הערך שימות מחזיר בפרמטר ה-read (בד"כ נתיב/URL להקלטה,
+ * תלוי בהגדרות המערכת - יש לוודא מול תיעוד ימות איזה ערך מוחזר בפועל
+ * עבור קלט מסוג record, ולעדכן כאן את בניית ה-URL בהתאם אם צריך).
+ */
+async function downloadRecording(recordingRef, systemToken) {
+  if (!recordingRef) {
+    throw new Error('לא התקבל נתיב הקלטה');
+  }
+
+  if (!systemToken) {
+    throw new Error('לא התקבל ApiToken/Token מימות עבור הורדת ההקלטה');
+  }
+
+  let url;
+
+  // אם ימות החזיר URL מלא - משתמשים בו, אבל מוסיפים token
+  // רק אם מדובר בכתובת DownloadFile של ימות.
+  if (/^https?:\/\//i.test(recordingRef)) {
+    const parsedUrl = new URL(recordingRef);
+
+    if (
+      parsedUrl.hostname === 'www.call2all.co.il' &&
+      parsedUrl.pathname === '/ym/api/DownloadFile'
+    ) {
+      parsedUrl.searchParams.set('token', systemToken);
+
+      // אם כבר קיים path, נוודא שהוא מתחיל ב-ivr2:
+      const existingPath = parsedUrl.searchParams.get('path') || '';
+
+      if (existingPath && !existingPath.startsWith('ivr2:')) {
+        parsedUrl.searchParams.set('path', `ivr2:${existingPath}`);
+      }
+
+      url = parsedUrl.toString();
+    } else {
+      // URL חיצוני/ישיר - לא משנים אותו
+      url = recordingRef;
+    }
+  } else {
+    // recordingRef הוא נתיב שקיבלנו מימות.
+    // DownloadFile דורש את הקידומת ivr2:
+    const filePath = recordingRef.startsWith('ivr2:')
+      ? recordingRef
+      : `ivr2:${recordingRef}`;
+
+    const params = new URLSearchParams({
+      token: systemToken,
+      path: filePath,
+    });
+
+    url = `https://www.call2all.co.il/ym/api/DownloadFile?${params.toString()}`;
+  }
+
+  logStep('DOWNLOAD_RECORDING_REQUEST', {
+    // בכוונה לא רושמים את הטוקן עצמו ללוג
+    url: url.replace(
+      /([?&]token=)[^&]*/i,
+      '$1[REDACTED]'
+    ),
+  });
+
+  const response = await fetch(url);
+
+  const contentType = response.headers.get('content-type') || '';
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  const bodyText = buffer.toString('utf8');
+
+  console.log(JSON.stringify({
+    event: 'RECORDING_DOWNLOAD_RESPONSE',
+    status: response.status,
+    contentType,
+    bytes: buffer.length,
+    firstBytes: buffer.subarray(0, 32).toString('hex'),
+    bodyPreview: contentType.includes('json')
+      ? bodyText.substring(0, 2000)
+      : undefined
+  }));
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download recording: HTTP ${response.status}`
+    );
+  }
+
+  if (contentType.toLowerCase().includes('application/json')) {
+    throw new Error(
+      `ימות החזיר JSON במקום קובץ WAV: ${bodyText.substring(0, 1000)}`
+    );
+  }
+
+  if (
+    buffer.length < 12 ||
+    buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+    buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
+  ) {
+    throw new Error(
+      `הקובץ שהתקבל אינו WAV תקין. bytes=${buffer.length}, content-type=${contentType}`
+    );
+  }
+
+  return buffer;
+}
+/**
+ * שולח את בייטי ה-wav לקובץ התמלול הנפרד (transcribe.py) בקריאת POST פנימית,
+ * בדיוק כפי שמתואר בהערות הראש של transcribe.py המקורי.
+ */
+async function transcribeViaService(wavBytes) {
+    const transcribeUrl = process.env.TRANSCRIBE_SERVICE_URL || '/api/yemot/transcribe.py';
+    const fullUrl = transcribeUrl.startsWith('http')
+        ? transcribeUrl
+        : `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : ''}${transcribeUrl}`;
+
+    logStep('TRANSCRIBE_REQUEST', { url: fullUrl, bytes: wavBytes.length });
+
+    let response;
+    try {
+        response = await fetch(fullUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'audio/wav' },
+            body: wavBytes,
+        });
+    } catch (networkErr) {
+        // כשל רשת/DNS/timeout בדרך אל ה-endpoint עצמו (לפני קבלת תגובה כלשהי)
+        logStep('TRANSCRIBE_NETWORK_ERROR', { message: networkErr.message });
+        throw new Error(`שגיאת רשת בפנייה לשירות התמלול: ${networkErr.message}`);
+    }
+
+    // קריאת הגוף כטקסט גולמי קודם - כדי לא להתפוצץ על JSON.parse אם חזר HTML
+    // (למשל דף שגיאת 404/500 של Vercel כאשר ה-function של הפייתון לא זמינה,
+    // נכשלה בפריסה, או חרגה מזמן ריצה - זה בדיוק המקור לשגיאה
+    // "Unexpected token '<', '<!DOCTYPE '... is not valid JSON" שדווחה).
+    const rawBody = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+
+    logStep('TRANSCRIBE_RESPONSE', {
+        status: response.status,
+        contentType,
+        bodyPreview: rawBody.slice(0, 200),
+    });
+
+    if (!contentType.includes('application/json')) {
+        // התגובה אינה JSON בכלל (סביר: דף שגיאת HTML של Vercel/פלטפורמה)
+        throw new Error(
+            `שירות התמלול החזיר תגובה לא תקינה (סטטוס ${response.status}, ` +
+            `content-type: ${contentType || 'לא ידוע'}). ייתכן שה-function של הפייתון ` +
+            `אינה פרוסה כראוי או נכשלה - יש לבדוק את הלוגים ב-Vercel עבור api/yemot/transcribe.`
+        );
+    }
+  
+ 
+  
+
+    let data;
+    try {
+        data = JSON.parse(rawBody);
+    } catch (parseErr) {
+        throw new Error(`שגיאה בפענוח תגובת שירות התמלול (JSON לא תקין): ${parseErr.message}`);
+    }
+
+    if (!response.ok) {
+        throw new Error(data.error || `שירות התמלול החזיר שגיאה (סטטוס ${response.status})`);
+    }
+    return (data.text || '').trim();
 }
