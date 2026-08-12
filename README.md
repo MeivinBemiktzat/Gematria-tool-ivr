@@ -1,17 +1,36 @@
 # מחשבון מחמאות - IVR לימות המשיח (Vercel)
 
-## מבנה הקבצים (4 קבצי קוד)
+## מבנה הקבצים
 
 1. `api/yemot/index.js` — כל לוגיקת ה-IVR (Node.js): תפריטים, state machine,
-   וכל חישובי הגימטריה/קונסטרוקציה, מועתקים 1:1 מ-`index.html`.
+   כל חישובי הגימטריה/קונסטרוקציה (מועתקים 1:1 מ-`index.html`), ושליחת
+   התוצאות למייל (דרך Google Apps Script).
 2. `api/yemot/transcribe.py` — תמלול הקלטת השם (Python), מותאם מהפרויקט
    הקודם, לחלוטין נפרד מקוד ה-IVR.
-3. `vercel.json` — קונפיגורציית Vercel לשתי הפונקציות.
-4. `package.json` — מטא-דאטה ל-Node.js.
+3. `vercel.json` — קונפיגורציית Vercel לשתי הפונקציות (**חשוב: שם הקובץ
+   חייב להיות באותיות קטנות בדיוק כך - `vercel.json` - אחרת Vercel לא
+   מזהה אותו כקובץ קונפיגורציה כלל**).
+4. `requirements.txt` — תלויות פייתון לפונקציית התמלול (**גם כאן שם
+   הקובץ חייב להיות אותיות קטנות בדיוק - אחרת Vercel לא מתקין את
+   התלויות והפונקציה נכשלת בזמן ריצה**).
+5. `package.json` — מטא-דאטה ל-Node.js.
+6. `google-apps-script/Code.gs` + `google-apps-script/DEPLOY.md` — קובץ
+   ה-Google Apps Script לשליחת מיילים ומדריך פריסה מלא (ר' סעיף "שליחת
+   תוצאות למייל" למטה).
 
 בנוסף: `content/*.txt` (מאגרי הטקסט - **יש להחליף בתוכן האמיתי**,
-לא היה כלול בקבצים שהועלו), `api/yemot/requirements.txt` (תלויות פייתון),
-ו-`MESSAGES.md` (רשימת הודעות המערכת).
+לא היה כלול בקבצים שהועלו), ו-`Messages.md` (רשימת הודעות המערכת).
+
+## שליחת תוצאות למייל
+
+בתפריט שאחרי כל תוצאה ניתן להקיש 3 לשליחת **כל** התוצאות (כולל פירוט
+גימטריה לכל תוצאה, במצב חישוב גימטריה) לכתובת מייל. כתובת המייל
+מוקלדת ע"י המתקשר באמצעות מודול הקלדת הטקסט של ימות במצב
+`EmailKeyboard`. השליחה בפועל מתבצעת דרך Google Apps Script (ולא דרך
+שירות SMTP חיצוני) - ר' `google-apps-script/DEPLOY.md` להוראות פריסה
+מלאות. יש להגדיר ב-Vercel את משתני הסביבה `GOOGLE_SCRIPT_URL` ו-
+`MAIL_SHARED_SECRET` (ר' שם). שם השולח שיוצג לנמען הוא "מערכת מחשבון
+מחמאות", גם אם כתובת המייל בפועל היא כתובת ה-Gmail של המפעיל.
 
 ## פריסה ב-Vercel (דרך GitHub)
 
@@ -20,9 +39,10 @@
 3. Vercel יזהה אוטומטית את `api/yemot/index.js` כ-Node function ואת
    `api/yemot/transcribe.py` כ-Python function (בזכות ה-`requirements.txt`
    הצמוד).
-4. אין צורך במשתני סביבה חובה. אופציונלי: `TRANSCRIBE_SERVICE_URL` אם
-   תרצו להצביע לכתובת תמלול חיצונית שונה מברירת המחדל
-   (`/api/yemot/transcribe` באותו דומיין).
+4. משתני סביבה: `GOOGLE_SCRIPT_URL` ו-`MAIL_SHARED_SECRET` **חובה** אם
+   רוצים שתעבוד שליחת תוצאות למייל (ר' `google-apps-script/DEPLOY.md`).
+   אופציונלי: `TRANSCRIBE_SERVICE_URL` אם תרצו להצביע לכתובת תמלול
+   חיצונית שונה מברירת המחדל (`/api/yemot/transcribe` באותו דומיין).
 5. לאחר הפריסה תקבלו כתובת כמו:
    `https://your-project.vercel.app/api/yemot/index`
 
