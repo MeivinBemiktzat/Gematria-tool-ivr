@@ -971,7 +971,7 @@ function buildEmailBodyHtml({ name, gender, contentType, calcType, totalGematria
       </div>
       <div class="footer">
         נשלח על ידי מערכת מחשבון מחמאות &middot; פותח על ידי
-        <a href="https://twitter.com/מייבין_במקצת">‎@מייבין במקצת</a>
+        <a href="https://mitmachim.top/user/%D7%9E%D7%99%D7%99%D7%91%D7%99%D7%9F-%D7%91%D7%9E%D7%A7%D7%A6%D7%AA">‎@מייבין במקצת</a>
       </div>
     </div>
   </div>
