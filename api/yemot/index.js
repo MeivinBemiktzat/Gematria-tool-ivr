@@ -230,17 +230,25 @@ function esc(text) {
  * בונה תגובת "read" - קורא הודעה (עם fallback ל-MB אם קיים) וממתין לקלט.
  * mode: 'tap' (הקשה) | 'record' (הקלטה) | 'none' (השמעה בלבד, ללא קלט)
  */
-function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, valName }) {
+function buildRead({
+    mbId,
+    ttsText,
+    mode = 'tap',
+    maxDigits = 1,
+    minDigits = 1,
+    valName
+}) {
     const label = valName || mbId;
-    let readSpec;
+
     if (mode === 'tap') {
-        readSpec = `t-${esc(ttsText)}=${label}=No=${maxDigits}=${minDigits}=0=0=0=0=${mbId}`;
-    } else if (mode === 'record') {
-        readSpec = `t-${esc(ttsText)}=${label}=No=record=0=0=0=0=${mbId}`;
-    } else {
-        readSpec = `t-${esc(ttsText)}=${label}=No=None=0=0=0=0=${mbId}`;
+        return `read=t-${esc(ttsText)}=${label}=No=${maxDigits}=${minDigits}=0=0=0=0=${mbId}`;
     }
-    return `read=${readSpec}`;
+
+    if (mode === 'record') {
+        return `read=t-${esc(ttsText)}=${label}=No=record=0=0=0=0=${mbId}`;
+    }
+
+    return `read=t-${esc(ttsText)}=${label}=No=None=0=0=0=0=${mbId}`;
 }
 
 function buildGoTo(folder) {
@@ -333,7 +341,9 @@ async function handleStep(state, query, stateKey, res, did) {
     switch (state.step) {
 
         case 'MENU_NAME_METHOD': {
-            const choice = query[MB.MENU_NAME_INPUT];
+            const choice =
+    query[MB.MENU_NAME_INPUT] ||
+    query[MB.MENU_NAME_INPUT.toLowerCase()];
             if (choice === '1') {
                 state.step = 'TYPE_NAME';
                 setState(stateKey, state);
@@ -362,7 +372,11 @@ async function handleStep(state, query, stateKey, res, did) {
 
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
-            const typedName = (query[MB.ASK_TYPE_NAME_TEXT] || '').trim();
+            const typedName = String(
+    query[MB.ASK_TYPE_NAME_TEXT] ||
+    query[MB.ASK_TYPE_NAME_TEXT.toLowerCase()] ||
+    ''
+).trim();
             if (!typedName) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
