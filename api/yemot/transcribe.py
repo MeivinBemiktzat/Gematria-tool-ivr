@@ -19,13 +19,22 @@ api/yemot/index.js (Node.js) מוריד את ההקלטה מימות ושולח 
 ובסוף ההקלטה - כדי שהתמלול לא "יבלע" חצאי מילים בקצוות ההקלטה (רלוונטי
 במיוחד לשמות קצרים, שהם המקרה השכיח בשלוחה זו). זה נעשה כאן (בפייתון)
 על בייטי ה-wav שהתקבלו, ולא בצד ימות.
+
+הערה חשובה (תיקון): ריפוד השקט מבוצע כעת עם מודול ה-wave המובנה של
+פייתון (stdlib) ולא עם pydub. הסיבה: pydub מסתמך על קריאה לתוכנת
+ffmpeg/ffprobe חיצונית (subprocess), שאינה מותקנת בסביבת הריצה
+הסטנדרטית של Vercel Python functions. כתוצאה מכך הפונקציה נכשלת
+(או אפילו נכשלת כבר בשלב האתחול/build), ו-Vercel מחזיר את דף
+ה-404/שגיאה הכללי של הפלטפורמה (HTML) במקום להריץ את הקוד - זה בדיוק
+התואם לשגיאה "שירות התמלול החזיר תגובה לא תקינה... content-type:
+text/html" שהתקבלה בפועל. מודול wave עובד ישירות על בייטי ה-PCM/WAV
+ואינו תלוי בשום בינארי חיצוני, ולכן מתאים לריצה תחת Vercel.
 """
 
 import io
 import json
 
 import speech_recognition as sr
-from pydub import AudioSegment
 
 # שפת התמלול - עברית (שמות מוקלטים בשלוחה 2 של מחשבון המחמאות)
 TRANSCRIBE_LANGUAGE = 'he-IL'
@@ -35,12 +44,26 @@ SILENCE_PADDING_MS = 500
 
 
 def pad_with_silence(wav_bytes: bytes) -> bytes:
-    """מוסיף שקט לפני ואחרי קובץ wav, ומחזיר בייטים של wav חדש."""
-    audio = AudioSegment.from_wav(io.BytesIO(wav_bytes))
-    silence = AudioSegment.silent(duration=SILENCE_PADDING_MS, frame_rate=audio.frame_rate)
-    padded = silence + audio + silence
+    """מוסיף שקט לפני ואחרי קובץ wav (ללא תלות ב-ffmpeg), ומחזיר בייטים של wav חדש."""
+    import wave
+
+    with wave.open(io.BytesIO(wav_bytes), 'rb') as src:
+        n_channels = src.getnchannels()
+        sample_width = src.getsampwidth()
+        frame_rate = src.getframerate()
+        n_frames = src.getnframes()
+        audio_frames = src.readframes(n_frames)
+
+    silence_n_frames = int(frame_rate * SILENCE_PADDING_MS / 1000)
+    silence_frames = b'\x00' * (silence_n_frames * n_channels * sample_width)
+
     out = io.BytesIO()
-    padded.export(out, format='wav')
+    with wave.open(out, 'wb') as dst:
+        dst.setnchannels(n_channels)
+        dst.setsampwidth(sample_width)
+        dst.setframerate(frame_rate)
+        dst.writeframes(silence_frames + audio_frames + silence_frames)
+
     return out.getvalue()
 
 
