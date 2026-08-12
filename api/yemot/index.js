@@ -415,7 +415,7 @@ module.exports = async (req, res) => {
 
         logStep('STEP_ENTERED', { stateKey, step: state.step });
 
-        return await handleStep(state, query, stateKey, res, did);
+        return await handleStep(state, query, stateKey, res, did, systemToken);
 
     } catch (err) {
         console.error('IVR error:', err);
@@ -434,7 +434,7 @@ module.exports = async (req, res) => {
 // שהוקלד/הוקלט תחת אותו שם בפרמטרי הבקשה הבאה.
 // ============================================================================
 
-async function handleStep(state, query, stateKey, res, did) {
+async function handleStep(state, query, stateKey, res, did, systemToken) {
     switch (state.step) {
 
         case 'MENU_NAME_METHOD': {
@@ -500,7 +500,7 @@ async function handleStep(state, query, stateKey, res, did) {
             let transcribedText = '';
             try {
                 logStep('DOWNLOAD_RECORDING_START', { recordingPath });
-                const wavBytes = await downloadRecording(recordingPath);
+                const wavBytes = await downloadRecording(recordingPath, systemToken);
                 logStep('DOWNLOAD_RECORDING_DONE', { bytes: wavBytes.length });
                 transcribedText = await transcribeViaService(wavBytes);
                 logStep('TRANSCRIPTION_DONE', { transcribedText });
@@ -1004,58 +1004,106 @@ function safeHost(url) {
  * תלוי בהגדרות המערכת - יש לוודא מול תיעוד ימות איזה ערך מוחזר בפועל
  * עבור קלט מסוג record, ולעדכן כאן את בניית ה-URL בהתאם אם צריך).
  */
-async function downloadRecording(recordingRef) {
-    let url = recordingRef;
+async function downloadRecording(recordingRef, systemToken) {
+  if (!recordingRef) {
+    throw new Error('לא התקבל נתיב הקלטה');
+  }
 
-    if (!/^https?:\/\//i.test(recordingRef)) {
-        url = `https://www.call2all.co.il/ym/api/DownloadFile?path=${encodeURIComponent(recordingRef)}`;
-    }
+  if (!systemToken) {
+    throw new Error('לא התקבל ApiToken/Token מימות עבור הורדת ההקלטה');
+  }
 
-    const response = await fetch(url);
+  let url;
 
-    const contentType = response.headers.get('content-type') || '';
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    const bodyText = buffer.toString('utf8');
-
-    console.log(JSON.stringify({
-        event: 'RECORDING_DOWNLOAD_RESPONSE',
-        url,
-        status: response.status,
-        contentType,
-        bytes: buffer.length,
-        firstBytes: buffer.subarray(0, 32).toString('hex'),
-        bodyPreview: contentType.includes('json')
-            ? bodyText.substring(0, 2000)
-            : undefined
-    }));
-
-    if (!response.ok) {
-        throw new Error(
-            `Failed to download recording: HTTP ${response.status}`
-        );
-    }
-
-    if (contentType.toLowerCase().includes('application/json')) {
-        throw new Error(
-            `ימות החזיר JSON במקום קובץ WAV: ${bodyText.substring(0, 1000)}`
-        );
-    }
+  // אם ימות החזיר URL מלא - משתמשים בו, אבל מוסיפים token
+  // רק אם מדובר בכתובת DownloadFile של ימות.
+  if (/^https?:\/\//i.test(recordingRef)) {
+    const parsedUrl = new URL(recordingRef);
 
     if (
-        buffer.length < 12 ||
-        buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
-        buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
+      parsedUrl.hostname === 'www.call2all.co.il' &&
+      parsedUrl.pathname === '/ym/api/DownloadFile'
     ) {
-        throw new Error(
-            `הקובץ שהתקבל אינו WAV תקין. bytes=${buffer.length}, content-type=${contentType}`
-        );
+      parsedUrl.searchParams.set('token', systemToken);
+
+      // אם כבר קיים path, נוודא שהוא מתחיל ב-ivr2:
+      const existingPath = parsedUrl.searchParams.get('path') || '';
+
+      if (existingPath && !existingPath.startsWith('ivr2:')) {
+        parsedUrl.searchParams.set('path', `ivr2:${existingPath}`);
+      }
+
+      url = parsedUrl.toString();
+    } else {
+      // URL חיצוני/ישיר - לא משנים אותו
+      url = recordingRef;
     }
+  } else {
+    // recordingRef הוא נתיב שקיבלנו מימות.
+    // DownloadFile דורש את הקידומת ivr2:
+    const filePath = recordingRef.startsWith('ivr2:')
+      ? recordingRef
+      : `ivr2:${recordingRef}`;
 
-    return buffer;
+    const params = new URLSearchParams({
+      token: systemToken,
+      path: filePath,
+    });
+
+    url = `https://www.call2all.co.il/ym/api/DownloadFile?${params.toString()}`;
+  }
+
+  logStep('DOWNLOAD_RECORDING_REQUEST', {
+    // בכוונה לא רושמים את הטוקן עצמו ללוג
+    url: url.replace(
+      /([?&]token=)[^&]*/i,
+      '$1[REDACTED]'
+    ),
+  });
+
+  const response = await fetch(url);
+
+  const contentType = response.headers.get('content-type') || '';
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  const bodyText = buffer.toString('utf8');
+
+  console.log(JSON.stringify({
+    event: 'RECORDING_DOWNLOAD_RESPONSE',
+    status: response.status,
+    contentType,
+    bytes: buffer.length,
+    firstBytes: buffer.subarray(0, 32).toString('hex'),
+    bodyPreview: contentType.includes('json')
+      ? bodyText.substring(0, 2000)
+      : undefined
+  }));
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download recording: HTTP ${response.status}`
+    );
+  }
+
+  if (contentType.toLowerCase().includes('application/json')) {
+    throw new Error(
+      `ימות החזיר JSON במקום קובץ WAV: ${bodyText.substring(0, 1000)}`
+    );
+  }
+
+  if (
+    buffer.length < 12 ||
+    buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+    buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
+  ) {
+    throw new Error(
+      `הקובץ שהתקבל אינו WAV תקין. bytes=${buffer.length}, content-type=${contentType}`
+    );
+  }
+
+  return buffer;
 }
-
 /**
  * שולח את בייטי ה-wav לקובץ התמלול הנפרד (transcribe.py) בקריאת POST פנימית,
  * בדיוק כפי שמתואר בהערות הראש של transcribe.py המקורי.
