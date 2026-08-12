@@ -30,11 +30,12 @@
  *
  * --------------------------------------------------------------------------
  * הודעות מערכת (MB) - ראו MESSAGES.md לרשימה המלאה ולשמות הקבצים המדויקים.
- * אם קיים בשלוחה קובץ ששמו מתחיל ב-MB ואחריו 4 ספרות (למשל MB1010, תלוי
- * אותיות רישיות/קטנות) - הוא יושמע במקום ה-TTS. הקוד תמיד שולח את שני
- * הפרמטרים (id_list_message + read עם טקסט TTS) לפי המנגנון של ימות,
- * שמחפש אוטומטית קובץ בשם שהוגדר בשלוחה ומשתמש בו אם קיים, ונופל בחזרה
- * ל-TTS אם לא. אין צורך בלוגיקה נוספת בקוד - זו התנהגות סטנדרטית של ימות.
+ * הערה: בניגוד להערה קודמת כאן - ימות *אינו* בוחר אוטומטית בין קובץ
+ * מוקלט (MBxxxx.wav) לבין טקסט TTS בתוך תגובת read/id_list_message.
+ * הבחירה בין קובץ (f-) לטקסט (t-) היא של הקוד ששולח את התגובה. קוד זה
+ * שולח כרגע תמיד TTS (t-...) כדי להבטיח שהשלוחה תעבוד גם ללא קבצי
+ * הקלטה מועלים. אם בעתיד יועלו קבצי MBxxxx.wav לשלוחה ורוצים שיושמעו
+ * במקום ה-TTS, יש להחליף את ההודעה הרלוונטית ל-f-MBxxxx באופן מפורש.
  * --------------------------------------------------------------------------
  */
 
@@ -221,34 +222,63 @@ function clearState(callId) {
 // עזרי תגובת ימות (type=api response syntax)
 // ============================================================================
 
-/** בריחת תווים בעייתיים למחרוזת תגובה של ימות (פסיק וכוכבית משמשים כמפרידים). */
+/**
+ * בריחת תווים אסורים במחרוזת תגובה של ימות.
+ * לפי תיעוד ימות (מודול API): אסור להחזיר בטקסט המושמע את התווים
+ * נקודה (.) מקף (-) גרש (') גרשיים (") ו-&  (הם משמשים כמפרידים במבנה
+ * התגובה עצמה - . מפריד בין הודעות, - מפריד סוג-הודעה מתוכן, & מפריד
+ * פעולות, ' ו-" עלולים לשבש פרסור). כמו כן פסיק (,) משמש להפרדת
+ * הפרמטרים בחלק השני של ה-read, ולכן גם אותו יש להסיר מטקסט TTS
+ * (אחרת המערכת תפרש אותו כמפריד שדות ותשלח תגובה לא תקינה).
+ */
 function esc(text) {
-    return String(text).replace(/,/g, '،').replace(/\r?\n/g, ' ');
+    return String(text)
+        .replace(/[.\-'"&,]/g, ' ')
+        .replace(/\r?\n/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 /**
- * בונה תגובת "read" - קורא הודעה (עם fallback ל-MB אם קיים) וממתין לקלט.
- * mode: 'tap' (הקשה) | 'record' (הקלטה) | 'none' (השמעה בלבד, ללא קלט)
+ * בונה תגובת "read" - קורא הודעה וממתין לקלט.
+ * תחביר רשמי של ימות (מודול API - "read"):
+ *   read=<חלק ראשון: ההודעה>=<חלק שני: הגדרות הקלט, מופרדות בפסיק>
+ * כלומר יש להשתמש ב-"=" פעם אחת בלבד (בין ההודעה להגדרות), וכל שאר
+ * ההגדרות (חלק שני) מופרדות בפסיק (,) ולא ב-"=". שימוש ב-"=" נוסף
+ * (כפי שהיה בעבר בקוד זה) גורם לימות לא לזהות את התגובה כתקינה,
+ * ולהשמיע מיד את הודעת "לא הוגדר לינק/מענה לא תקין" ולנתק את השיחה -
+ * זה בדיוק מה שקרה בבאג "מיד בכניסה לשלוחה המערכת מנתקת".
+ * מבנה החלק השני עבור הקשה (tap):
+ *   val_name,re_enter_if_exists,max_digits,min_digits,sec_wait,
+ *   typing_playback_mode,block_asterisk_key,block_zero_key,
+ *   replace_char,digits_allowed,amount_attempts,read_answer,empty_val
+ * mode: 'tap' (הקשה) | 'record' (הקלטה) | 'none' (השמעה בלבד, ללא קלט
+ * נוסף - במקרה זה לא נשלחת בקשת read אמיתית, ולכן משתמשים ב-id_list_message
+ * עם שרשור go_to_folder כדי להמשיך את הזרימה, ראה buildAnnounce).
  */
-function buildRead({
-    mbId,
-    ttsText,
-    mode = 'tap',
-    maxDigits = 1,
-    minDigits = 1,
-    valName
-}) {
+function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, valName }) {
     const label = valName || mbId;
-
+    const message = `t-${esc(ttsText)}`;
+    let options;
     if (mode === 'tap') {
-        return `read=t-${esc(ttsText)}=${label}=No=${maxDigits}=${minDigits}=0=0=0=0=${mbId}`;
+        // val_name,re_enter,max_digits,min_digits,sec_wait,typing_mode,...
+        options = `${label},,${maxDigits},${minDigits},,No`;
+    } else if (mode === 'record') {
+        options = `${label},,record`;
+    } else {
+        // אין קלט נוסף לבקש - זו למעשה השמעת הודעה בלבד, לא read אמיתי
+        return buildAnnounce({ ttsText });
     }
+    return `read=${message}=${options}`;
+}
 
-    if (mode === 'record') {
-        return `read=t-${esc(ttsText)}=${label}=No=record=0=0=0=0=${mbId}`;
-    }
-
-    return `read=t-${esc(ttsText)}=${label}=No=None=0=0=0=0=${mbId}`;
+/**
+ * השמעת הודעה בלבד ללא בקשת קלט (id_list_message), עם אפשרות לשרשר
+ * פעולת המשך (go_to_folder) לפי התחביר הרשמי:
+ *   id_list_message=t-הטקסט&go_to_folder=...
+ */
+function buildAnnounce({ ttsText }) {
+    return `id_list_message=t-${esc(ttsText)}`;
 }
 
 function buildGoTo(folder) {
@@ -341,9 +371,7 @@ async function handleStep(state, query, stateKey, res, did) {
     switch (state.step) {
 
         case 'MENU_NAME_METHOD': {
-            const choice =
-    query[MB.MENU_NAME_INPUT] ||
-    query[MB.MENU_NAME_INPUT.toLowerCase()];
+            const choice = query[MB.MENU_NAME_INPUT];
             if (choice === '1') {
                 state.step = 'TYPE_NAME';
                 setState(stateKey, state);
@@ -372,11 +400,7 @@ async function handleStep(state, query, stateKey, res, did) {
 
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
-            const typedName = String(
-    query[MB.ASK_TYPE_NAME_TEXT] ||
-    query[MB.ASK_TYPE_NAME_TEXT.toLowerCase()] ||
-    ''
-).trim();
+            const typedName = (query[MB.ASK_TYPE_NAME_TEXT] || '').trim();
             if (!typedName) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
