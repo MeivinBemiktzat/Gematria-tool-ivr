@@ -772,7 +772,6 @@ async function handleStep(state, query, stateKey, res, did) {
             state.results = results;
             state.totalGematria = totalGematria;
             state.resultIndex = 0;
-            transitionTo(stateKey, state, 'PLAY_RESULTS');
 
             logStep('CALCULATION_DONE', {
                 name: state.name,
@@ -796,28 +795,21 @@ async function handleStep(state, query, stateKey, res, did) {
                 ? `הגימטריה הכוללת של השם היא ${totalGematria}. נמצאו ${results.length} תוצאות מתאימות.`
                 : `נמצאו ${results.length} תוצאות מתאימות לפי אותיות השם.`;
 
+            transitionTo(stateKey, state, 'AFTER_RESULT');
             return respond(res, buildRead({
-                mbId: MB.RESULTS_INTRO,
-                ttsText: introText,
-                mode: 'none',
-            }) + '&' + buildGoTo('.')); // ימשיך אוטומטית לתוצאה הראשונה
+                mbId: MB.RESULT_ITEM,
+                ttsText: `${introText} תוצאה מספר 1 מתוך ${results.length}: ${results[0]}. ${afterResultMenuText()}`,
+                mode: 'tap',
+                maxDigits: 1,
+                valName: MB.AFTER_RESULT_MENU,
+                state,
+            }));
         }
 
-        // השמעת תוצאה נוכחית + תפריט המשך
-        case 'PLAY_RESULTS':
+        // תפריט לאחר תוצאה - קבלת קלט מהמשתמש והמשך בהתאם
         case 'AFTER_RESULT': {
-            // אם הגענו לכאן ישירות מ-ASK_CALC_TYPE (go_to_folder .) - נשמיע תוצאה
             const idx = state.resultIndex;
             const current = state.results[idx];
-
-            if (state.step === 'PLAY_RESULTS') {
-                transitionTo(stateKey, state, 'AFTER_RESULT');
-                return respond(res, buildRead({
-                    mbId: MB.RESULT_ITEM,
-                    ttsText: `תוצאה מספר ${idx + 1} מתוך ${state.results.length}: ${current}`,
-                    mode: 'none',
-                }) + '&' + buildGoTo('.'));
-            }
 
             // AFTER_RESULT: קיבלנו קלט מהמשתמש (תפריט לאחר תוצאה)
             const choice = getReadValue(state, query, MB.AFTER_RESULT_MENU, MB.RESULT_ITEM, MB.GEMATRIA_DETAIL_INTRO, MB.EMAIL_SENT_OK, MB.EMAIL_SENT_FAILED);
@@ -846,12 +838,14 @@ async function handleStep(state, query, stateKey, res, did) {
                 // תוצאה קודמת
                 if (idx > 0) {
                     state.resultIndex = idx - 1;
-                    transitionTo(stateKey, state, 'PLAY_RESULTS');
                     return respond(res, buildRead({
                         mbId: MB.RESULT_ITEM,
-                        ttsText: `תוצאה מספר ${idx} מתוך ${state.results.length}: ${state.results[idx - 1]}`,
-                        mode: 'none',
-                    }) + '&' + buildGoTo('.'));
+                        ttsText: `תוצאה מספר ${idx} מתוך ${state.results.length}: ${state.results[idx - 1]}. ${afterResultMenuText()}`,
+                        mode: 'tap',
+                        maxDigits: 1,
+                        valName: MB.AFTER_RESULT_MENU,
+                        state,
+                    }));
                 }
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
@@ -865,12 +859,14 @@ async function handleStep(state, query, stateKey, res, did) {
                 // תוצאה הבאה
                 if (idx + 1 < state.results.length) {
                     state.resultIndex = idx + 1;
-                    transitionTo(stateKey, state, 'PLAY_RESULTS');
                     return respond(res, buildRead({
                         mbId: MB.RESULT_ITEM,
-                        ttsText: `תוצאה מספר ${idx + 2} מתוך ${state.results.length}: ${state.results[idx + 1]}`,
-                        mode: 'none',
-                    }) + '&' + buildGoTo('.'));
+                        ttsText: `תוצאה מספר ${idx + 2} מתוך ${state.results.length}: ${state.results[idx + 1]}. ${afterResultMenuText()}`,
+                        mode: 'tap',
+                        maxDigits: 1,
+                        valName: MB.AFTER_RESULT_MENU,
+                        state,
+                    }));
                 }
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
