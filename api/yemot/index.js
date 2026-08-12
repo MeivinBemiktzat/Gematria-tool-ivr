@@ -63,6 +63,12 @@ const MB = {
     GENERIC_ERROR: 'MB1015',        // "אירעה שגיאה, אנא נסו שוב מאוחר יותר"
     GOODBYE: 'MB1016',              // "תודה ולהתראות"
     INVALID_INPUT: 'MB1017',        // "הקשה לא תקינה, אנא נסו שוב"
+    NAME_GEMATRIA_ANNOUNCE: 'MB1018', // "הגימטריה של השם ... היא ... לשמיעת פירוט הקישו 1, להמשך הקישו 2"
+    NAME_GEMATRIA_DETAIL: 'MB1019', // פירוט הגימטריה של השם עצמו (אות-אות), לפני בחירת מין/סוג תוכן
+    ASK_EMAIL_FOR_EXPORT: 'MB1020', // "להזנת כתובת מייל לשליחת התוצאות הקישו 1, לדילוג הקישו 2"
+    TYPE_EMAIL: 'MB1021',           // "אנא הקלידו את כתובת המייל באמצעות המקלדת, ובסיום הקישו סולמית"
+    EMAIL_SENT_OK: 'MB1022',        // "התוצאות נשלחו למייל בהצלחה"
+    EMAIL_SENT_FAILED: 'MB1023',    // "שליחת המייל נכשלה, אנא נסו שוב מאוחר יותר"
 };
 
 // ============================================================================
@@ -256,13 +262,16 @@ function esc(text) {
  * נוסף - במקרה זה לא נשלחת בקשת read אמיתית, ולכן משתמשים ב-id_list_message
  * עם שרשור go_to_folder כדי להמשיך את הזרימה, ראה buildAnnounce).
  */
-function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, valName }) {
+function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, valName, typingMode }) {
     const label = valName || mbId;
     const message = `t-${esc(ttsText)}`;
     let options;
     if (mode === 'tap') {
-        // val_name,re_enter,max_digits,min_digits,sec_wait,typing_mode,...
-        options = `${label},,${maxDigits},${minDigits},,No`;
+        // val_name,re_enter,max_digits,min_digits,sec_wait,typing_playback_mode,...
+        // typingMode: 'No' (הקשות ספרות רגילות) | 'HebrewKeyboard' (מקלדת הקלדת טקסט
+        // עברית של ימות - ר' תיעוד מודול ה-API, "הערך השישי (הקשה)") | 'EmailKeyboard'
+        // (מקלדת הקלדת כתובת מייל של ימות).
+        options = `${label},,${maxDigits},${minDigits},,${typingMode || 'No'}`;
     } else if (mode === 'record') {
         options = `${label},,record`;
     } else {
@@ -289,9 +298,44 @@ function buildHangup() {
     return 'hangup=yes';
 }
 
+/**
+ * בונה תגובה המכריזה על הגימטריה הכוללת של השם עצמו (בטרם בחירת מין/סוג
+ * תוכן/סוג חישוב), ומציעה תפריט: 1 = שמיעת פירוט הגימטריה, 2 = המשך.
+ * נשלחת הן אחרי הקלדת שם והן אחרי אישור שם שתומלל מהקלטה - כנדרש שיוכרז
+ * בכל שלב מה הגימטריה שחושבה, גם אם בהמשך לא יימצאו תוצאות תוכן מתאימות.
+ */
+function announceNameGematria(name) {
+    const total = calculateWordGematria(name);
+    return buildRead({
+        mbId: MB.NAME_GEMATRIA_ANNOUNCE,
+        ttsText: `הגימטריה של השם ${name} היא ${total}. לשמיעת פירוט הגימטריה הקישו 1. להמשך הקישו 2.`,
+        mode: 'tap',
+        maxDigits: 1,
+    });
+}
+
 function respond(res, body) {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.status(200).send(body);
+}
+
+// ============================================================================
+// לוגים - נראים ב-Vercel (טאב "Logs"/"Runtime Logs" של ה-function
+// api/yemot/index) עבור כל שלב בשיחה. console.log מגיע ל-stdout ולכן
+// מופיע אוטומטית בלוגים של Vercel ללא צורך בהגדרה נוספת.
+// ============================================================================
+
+function logStep(eventName, details = {}) {
+    try {
+        console.log(JSON.stringify({
+            event: eventName,
+            ts: new Date().toISOString(),
+            ...details,
+        }));
+    } catch (e) {
+        // גיבוי אם details לא ניתן ל-JSON.stringify מכל סיבה
+        console.log(`[${eventName}]`, details);
+    }
 }
 
 // ============================================================================
@@ -321,7 +365,14 @@ module.exports = async (req, res) => {
         const extension = query.ApiExtension || query.Extension || '';
         const systemToken = extractSystemToken(query);
 
+        logStep('REQUEST_RECEIVED', {
+            callId, did, extension,
+            hasToken: Boolean(systemToken),
+            queryKeys: Object.keys(query),
+        });
+
         if (!callId) {
+            logStep('MISSING_CALL_ID', {});
             return respond(res, buildRead({
                 mbId: MB.GENERIC_ERROR,
                 ttsText: 'אירעה שגיאה, אנא נסו שוב מאוחר יותר',
@@ -341,6 +392,7 @@ module.exports = async (req, res) => {
         if (!state) {
             state = { step: 'MENU_NAME_METHOD' };
             setState(stateKey, state);
+            logStep('NEW_CALL_STARTED', { stateKey });
             return respond(res, buildRead({
                 mbId: MB.MENU_NAME_INPUT,
                 ttsText: 'ברוכים הבאים למחשבון מחמאות. להקלדת שם באמצעות המקלדת הקישו 1. להקלטת שם הקישו 2.',
@@ -349,10 +401,13 @@ module.exports = async (req, res) => {
             }));
         }
 
+        logStep('STEP_ENTERED', { stateKey, step: state.step });
+
         return await handleStep(state, query, stateKey, res, did);
 
     } catch (err) {
         console.error('IVR error:', err);
+        logStep('UNCAUGHT_ERROR', { message: err.message, stack: err.stack });
         return respond(res, buildRead({
             mbId: MB.GENERIC_ERROR,
             ttsText: 'אירעה שגיאה, אנא נסו שוב מאוחר יותר',
@@ -377,10 +432,14 @@ async function handleStep(state, query, stateKey, res, did) {
                 setState(stateKey, state);
                 return respond(res, buildRead({
                     mbId: MB.ASK_TYPE_NAME_TEXT,
-                    ttsText: 'אנא הקלידו את שמכם באמצעות המקלדת, ובסיום הקישו סולמית.',
+                    ttsText: 'אנא הקלידו את שמכם באמצעות מקלדת ההקלדה, ובסיום הקישו סולמית.',
                     mode: 'tap',
                     maxDigits: 30,
                     minDigits: 1,
+                    // מודול הקלדת טקסט של ימות (HebrewKeyboard) - מאפשר למתקשר
+                    // להקליד שם בעברית באמצעות מקשי הטלפון (T9-כמו-הקלדת-SMS ישנה),
+                    // במקום הקשות ספרות רגילות בלבד.
+                    typingMode: 'HebrewKeyboard',
                 }));
             } else if (choice === '2') {
                 state.step = 'RECORD_NAME';
@@ -409,14 +468,10 @@ async function handleStep(state, query, stateKey, res, did) {
                 }) + '&' + buildGoTo('/'));
             }
             state.name = typedName;
-            state.step = 'ASK_GENDER';
+            state.step = 'ANNOUNCE_NAME_GEMATRIA';
             setState(stateKey, state);
-            return respond(res, buildRead({
-                mbId: MB.ASK_GENDER,
-                ttsText: 'לחישוב עבור זכר הקישו 1. לחישוב עבור נקבה הקישו 2.',
-                mode: 'tap',
-                maxDigits: 1,
-            }));
+            logStep('NAME_ACQUIRED', { method: 'typed', name: typedName });
+            return respond(res, announceNameGematria(typedName));
         }
 
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
@@ -432,10 +487,14 @@ async function handleStep(state, query, stateKey, res, did) {
 
             let transcribedText = '';
             try {
+                logStep('DOWNLOAD_RECORDING_START', { recordingPath });
                 const wavBytes = await downloadRecording(recordingPath);
+                logStep('DOWNLOAD_RECORDING_DONE', { bytes: wavBytes.length });
                 transcribedText = await transcribeViaService(wavBytes);
+                logStep('TRANSCRIPTION_DONE', { transcribedText });
             } catch (err) {
                 console.error('Transcription error:', err);
+                logStep('TRANSCRIPTION_ERROR', { message: err.message });
                 transcribedText = '';
             }
 
@@ -465,14 +524,10 @@ async function handleStep(state, query, stateKey, res, did) {
             if (choice === '1') {
                 state.name = state.pendingName;
                 delete state.pendingName;
-                state.step = 'ASK_GENDER';
+                state.step = 'ANNOUNCE_NAME_GEMATRIA';
                 setState(stateKey, state);
-                return respond(res, buildRead({
-                    mbId: MB.ASK_GENDER,
-                    ttsText: 'לחישוב עבור זכר הקישו 1. לחישוב עבור נקבה הקישו 2.',
-                    mode: 'tap',
-                    maxDigits: 1,
-                }));
+                logStep('NAME_ACQUIRED', { method: 'recorded_transcribed', name: state.name });
+                return respond(res, announceNameGematria(state.name));
             } else if (choice === '2') {
                 state.step = 'RECORD_NAME';
                 setState(stateKey, state);
@@ -488,6 +543,32 @@ async function handleStep(state, query, stateKey, res, did) {
                 mode: 'tap',
                 maxDigits: 1,
             }));
+        }
+
+        // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה/הקלטה+אישור),
+        // עם אפשרות לשמוע פירוט אות-אות או להמשיך לבחירת מין/סוג תוכן.
+        case 'ANNOUNCE_NAME_GEMATRIA': {
+            const choice = query[MB.NAME_GEMATRIA_ANNOUNCE];
+            if (choice === '1') {
+                const detailLines = generateGematriaDetails(state.name);
+                logStep('NAME_GEMATRIA_DETAIL_PLAYED', { name: state.name });
+                return respond(res, buildRead({
+                    mbId: MB.NAME_GEMATRIA_DETAIL,
+                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join(', ')}`,
+                    mode: 'none',
+                }) + '&' + buildGoTo('.'));
+            } else if (choice === '2') {
+                state.step = 'ASK_GENDER';
+                setState(stateKey, state);
+                return respond(res, buildRead({
+                    mbId: MB.ASK_GENDER,
+                    ttsText: 'לחישוב עבור זכר הקישו 1. לחישוב עבור נקבה הקישו 2.',
+                    mode: 'tap',
+                    maxDigits: 1,
+                }));
+            }
+            // כניסה ראשונה לשלב זה (עדיין לא הגיע קלט על תפריט זה) - נשמיע שוב
+            return respond(res, announceNameGematria(state.name));
         }
 
         // בחירת זכר/נקבה - כפי שה-HTML דורש (select#gender) לפני החישוב
@@ -553,8 +634,10 @@ async function handleStep(state, query, stateKey, res, did) {
             let text;
             try {
                 text = loadContentFile(fileName);
+                logStep('CONTENT_FILE_LOADED', { fileName, chars: text.length });
             } catch (err) {
                 console.error('Content load error:', err);
+                logStep('CONTENT_FILE_ERROR', { fileName, message: err.message });
                 return respond(res, buildRead({
                     mbId: MB.GENERIC_ERROR,
                     ttsText: 'אירעה שגיאה בטעינת המאגר, אנא נסו שוב מאוחר יותר.',
@@ -576,6 +659,15 @@ async function handleStep(state, query, stateKey, res, did) {
             state.resultIndex = 0;
             state.step = 'PLAY_RESULTS';
             setState(stateKey, state);
+
+            logStep('CALCULATION_DONE', {
+                name: state.name,
+                calcType: state.calcType,
+                contentType: state.contentType,
+                gender: state.gender,
+                totalGematria,
+                resultsCount: results.length,
+            });
 
             if (results.length === 0) {
                 state.step = 'MENU_NAME_METHOD_END';
@@ -651,6 +743,16 @@ async function handleStep(state, query, stateKey, res, did) {
                     ttsText: 'זו הייתה התוצאה האחרונה.',
                     mode: 'none',
                 }) + '&' + buildGoTo('.'));
+            } else if (choice === '3') {
+                // ייצוא כל התוצאות ושליחתן למייל
+                state.step = 'ASK_EMAIL_FOR_EXPORT';
+                setState(stateKey, state);
+                return respond(res, buildRead({
+                    mbId: MB.ASK_EMAIL_FOR_EXPORT,
+                    ttsText: 'לשליחת כל התוצאות לכתובת מייל הקישו 1. לחזרה לתפריט התוצאות הקישו 2.',
+                    mode: 'tap',
+                    maxDigits: 1,
+                }));
             } else if (choice === '9') {
                 clearState(stateKey);
                 return respond(res, buildRead({
@@ -662,10 +764,92 @@ async function handleStep(state, query, stateKey, res, did) {
 
             return respond(res, buildRead({
                 mbId: MB.AFTER_RESULT_MENU,
-                ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לסיום הקישו 9.',
+                ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
                 mode: 'tap',
                 maxDigits: 1,
             }));
+        }
+
+        // בקשת כתובת מייל לייצוא (לפני הקלדת הכתובת בפועל)
+        case 'ASK_EMAIL_FOR_EXPORT': {
+            const choice = query[MB.ASK_EMAIL_FOR_EXPORT];
+            if (choice === '1') {
+                state.step = 'TYPE_EMAIL';
+                setState(stateKey, state);
+                return respond(res, buildRead({
+                    mbId: MB.TYPE_EMAIL,
+                    ttsText: 'אנא הקלידו את כתובת המייל באמצעות המקלדת, ובסיום הקישו סולמית.',
+                    mode: 'tap',
+                    maxDigits: 60,
+                    minDigits: 3,
+                    // מודול הקלדת טקסט של ימות במצב הקלדת כתובת מייל
+                    typingMode: 'EmailKeyboard',
+                }));
+            } else if (choice === '2') {
+                state.step = 'AFTER_RESULT';
+                setState(stateKey, state);
+                return respond(res, buildRead({
+                    mbId: MB.AFTER_RESULT_MENU,
+                    ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
+                    mode: 'tap',
+                    maxDigits: 1,
+                }));
+            }
+            return respond(res, buildRead({
+                mbId: MB.INVALID_INPUT,
+                ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
+                mode: 'tap',
+                maxDigits: 1,
+            }));
+        }
+
+        // קליטת כתובת המייל שהוקלדה, ושליחת התוצאות אליה דרך Google Apps Script
+        case 'TYPE_EMAIL': {
+            const email = (query[MB.TYPE_EMAIL] || '').trim();
+            logStep('EMAIL_TYPED', { email });
+
+            if (!email || !isValidEmail(email)) {
+                return respond(res, buildRead({
+                    mbId: MB.INVALID_INPUT,
+                    ttsText: 'כתובת המייל שהוקלדה אינה תקינה, אנא נסו שוב.',
+                    mode: 'tap',
+                    maxDigits: 60,
+                    minDigits: 3,
+                    typingMode: 'EmailKeyboard',
+                }));
+            }
+
+            try {
+                await sendResultsByEmail({
+                    toEmail: email,
+                    name: state.name,
+                    gender: state.gender,
+                    contentType: state.contentType,
+                    calcType: state.calcType,
+                    totalGematria: state.totalGematria,
+                    results: state.results,
+                });
+                logStep('EMAIL_SENT_OK', { email });
+                state.step = 'AFTER_RESULT';
+                setState(stateKey, state);
+                return respond(res, buildRead({
+                    mbId: MB.EMAIL_SENT_OK,
+                    ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לסיום הקישו 9.`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                }));
+            } catch (err) {
+                console.error('Email export error:', err);
+                logStep('EMAIL_SENT_FAILED', { email, message: err.message });
+                state.step = 'AFTER_RESULT';
+                setState(stateKey, state);
+                return respond(res, buildRead({
+                    mbId: MB.EMAIL_SENT_FAILED,
+                    ttsText: 'אירעה שגיאה בשליחת המייל, אנא נסו שוב מאוחר יותר. לתפריט התוצאות הקישו כל מקש.',
+                    mode: 'tap',
+                    maxDigits: 1,
+                }));
+            }
         }
 
         case 'MENU_NAME_METHOD_END': {
@@ -722,15 +906,52 @@ async function transcribeViaService(wavBytes) {
         ? transcribeUrl
         : `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : ''}${transcribeUrl}`;
 
-    const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'audio/wav' },
-        body: wavBytes,
+    logStep('TRANSCRIBE_REQUEST', { url: fullUrl, bytes: wavBytes.length });
+
+    let response;
+    try {
+        response = await fetch(fullUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'audio/wav' },
+            body: wavBytes,
+        });
+    } catch (networkErr) {
+        // כשל רשת/DNS/timeout בדרך אל ה-endpoint עצמו (לפני קבלת תגובה כלשהי)
+        logStep('TRANSCRIBE_NETWORK_ERROR', { message: networkErr.message });
+        throw new Error(`שגיאת רשת בפנייה לשירות התמלול: ${networkErr.message}`);
+    }
+
+    // קריאת הגוף כטקסט גולמי קודם - כדי לא להתפוצץ על JSON.parse אם חזר HTML
+    // (למשל דף שגיאת 404/500 של Vercel כאשר ה-function של הפייתון לא זמינה,
+    // נכשלה בפריסה, או חרגה מזמן ריצה - זה בדיוק המקור לשגיאה
+    // "Unexpected token '<', '<!DOCTYPE '... is not valid JSON" שדווחה).
+    const rawBody = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+
+    logStep('TRANSCRIBE_RESPONSE', {
+        status: response.status,
+        contentType,
+        bodyPreview: rawBody.slice(0, 200),
     });
 
-    const data = await response.json();
+    if (!contentType.includes('application/json')) {
+        // התגובה אינה JSON בכלל (סביר: דף שגיאת HTML של Vercel/פלטפורמה)
+        throw new Error(
+            `שירות התמלול החזיר תגובה לא תקינה (סטטוס ${response.status}, ` +
+            `content-type: ${contentType || 'לא ידוע'}). ייתכן שה-function של הפייתון ` +
+            `אינה פרוסה כראוי או נכשלה - יש לבדוק את הלוגים ב-Vercel עבור api/yemot/transcribe.`
+        );
+    }
+
+    let data;
+    try {
+        data = JSON.parse(rawBody);
+    } catch (parseErr) {
+        throw new Error(`שגיאה בפענוח תגובת שירות התמלול (JSON לא תקין): ${parseErr.message}`);
+    }
+
     if (!response.ok) {
-        throw new Error(data.error || 'Transcription service error');
+        throw new Error(data.error || `שירות התמלול החזיר שגיאה (סטטוס ${response.status})`);
     }
     return (data.text || '').trim();
 }
