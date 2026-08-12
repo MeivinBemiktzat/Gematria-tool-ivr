@@ -220,6 +220,18 @@ function setState(callId, state) {
     callStates.set(callId, { state, touchedAt: Date.now() });
 }
 
+/**
+ * שומר state ובנוסף רושם ללוג (Vercel) את המעבר בין שלבים בשיחה -
+ * שם השלב הקודם ושם השלב הבא - כך שכל מעבר במכונת המצבים נראה בבירור
+ * בלוגים של Vercel (טאב Logs/Runtime Logs עבור api/yemot/index).
+ */
+function transitionTo(stateKey, state, nextStep, extra = {}) {
+    const prevStep = state.step;
+    state.step = nextStep;
+    setState(stateKey, state);
+    logStep('STEP_TRANSITION', { stateKey, from: prevStep, to: nextStep, ...extra });
+}
+
 function clearState(callId) {
     callStates.delete(callId);
 }
@@ -428,8 +440,7 @@ async function handleStep(state, query, stateKey, res, did) {
         case 'MENU_NAME_METHOD': {
             const choice = query[MB.MENU_NAME_INPUT];
             if (choice === '1') {
-                state.step = 'TYPE_NAME';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'TYPE_NAME');
                 return respond(res, buildRead({
                     mbId: MB.ASK_TYPE_NAME_TEXT,
                     ttsText: 'אנא הקלידו את שמכם באמצעות מקלדת ההקלדה, ובסיום הקישו סולמית.',
@@ -442,8 +453,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     typingMode: 'HebrewKeyboard',
                 }));
             } else if (choice === '2') {
-                state.step = 'RECORD_NAME';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'RECORD_NAME');
                 return respond(res, buildRead({
                     mbId: MB.ASK_RECORD_NAME,
                     ttsText: 'אנא הקליטו את שמכם, ובסיום ההקלטה הקישו סולמית.',
@@ -468,8 +478,7 @@ async function handleStep(state, query, stateKey, res, did) {
                 }) + '&' + buildGoTo('/'));
             }
             state.name = typedName;
-            state.step = 'ANNOUNCE_NAME_GEMATRIA';
-            setState(stateKey, state);
+            transitionTo(stateKey, state, 'ANNOUNCE_NAME_GEMATRIA');
             logStep('NAME_ACQUIRED', { method: 'typed', name: typedName });
             return respond(res, announceNameGematria(typedName));
         }
@@ -499,8 +508,7 @@ async function handleStep(state, query, stateKey, res, did) {
             }
 
             if (!transcribedText) {
-                state.step = 'RECORD_NAME';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'RECORD_NAME');
                 return respond(res, buildRead({
                     mbId: MB.TRANSCRIBE_FAILED,
                     ttsText: 'לא הצלחנו לזהות את השם בהקלטה. אנא הקליטו שוב את שמכם ובסיום הקישו סולמית.',
@@ -509,8 +517,7 @@ async function handleStep(state, query, stateKey, res, did) {
             }
 
             state.pendingName = transcribedText;
-            state.step = 'CONFIRM_TRANSCRIPTION';
-            setState(stateKey, state);
+            transitionTo(stateKey, state, 'CONFIRM_TRANSCRIPTION');
             return respond(res, buildRead({
                 mbId: MB.TRANSCRIBE_CONFIRM,
                 ttsText: `השם שזוהה הוא ${transcribedText}. להמשך עם שם זה הקישו 1. להקלטה חוזרת הקישו 2.`,
@@ -524,13 +531,11 @@ async function handleStep(state, query, stateKey, res, did) {
             if (choice === '1') {
                 state.name = state.pendingName;
                 delete state.pendingName;
-                state.step = 'ANNOUNCE_NAME_GEMATRIA';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'ANNOUNCE_NAME_GEMATRIA');
                 logStep('NAME_ACQUIRED', { method: 'recorded_transcribed', name: state.name });
                 return respond(res, announceNameGematria(state.name));
             } else if (choice === '2') {
-                state.step = 'RECORD_NAME';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'RECORD_NAME');
                 return respond(res, buildRead({
                     mbId: MB.ASK_RECORD_NAME,
                     ttsText: 'אנא הקליטו שוב את שמכם, ובסיום הקישו סולמית.',
@@ -558,8 +563,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     mode: 'none',
                 }) + '&' + buildGoTo('.'));
             } else if (choice === '2') {
-                state.step = 'ASK_GENDER';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'ASK_GENDER');
                 return respond(res, buildRead({
                     mbId: MB.ASK_GENDER,
                     ttsText: 'לחישוב עבור זכר הקישו 1. לחישוב עבור נקבה הקישו 2.',
@@ -576,8 +580,7 @@ async function handleStep(state, query, stateKey, res, did) {
             const choice = query[MB.ASK_GENDER];
             if (choice === '1' || choice === '2') {
                 state.gender = choice === '1' ? 'male' : 'female';
-                state.step = 'ASK_CONTENT_TYPE';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'ASK_CONTENT_TYPE');
                 return respond(res, buildRead({
                     mbId: MB.ASK_CONTENT_TYPE,
                     ttsText: 'למחמאות הקישו 1. לברכות הקישו 2. למשפטי מוטיבציה הקישו 3. לפתגמים הקישו 4.',
@@ -606,8 +609,7 @@ async function handleStep(state, query, stateKey, res, did) {
                 }));
             }
             state.contentType = contentType;
-            state.step = 'ASK_CALC_TYPE';
-            setState(stateKey, state);
+            transitionTo(stateKey, state, 'ASK_CALC_TYPE');
             return respond(res, buildRead({
                 mbId: MB.ASK_CALC_TYPE,
                 ttsText: 'לחישוב לפי גימטריה הקישו 1. לחישוב לפי קונסטרוקציה (אותיות השם) הקישו 2.',
@@ -657,8 +659,7 @@ async function handleStep(state, query, stateKey, res, did) {
             state.results = results;
             state.totalGematria = totalGematria;
             state.resultIndex = 0;
-            state.step = 'PLAY_RESULTS';
-            setState(stateKey, state);
+            transitionTo(stateKey, state, 'PLAY_RESULTS');
 
             logStep('CALCULATION_DONE', {
                 name: state.name,
@@ -670,8 +671,7 @@ async function handleStep(state, query, stateKey, res, did) {
             });
 
             if (results.length === 0) {
-                state.step = 'MENU_NAME_METHOD_END';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'MENU_NAME_METHOD_END');
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
                     ttsText: 'לא נמצאו תוצאות מתאימות לשם זה.',
@@ -698,8 +698,7 @@ async function handleStep(state, query, stateKey, res, did) {
             const current = state.results[idx];
 
             if (state.step === 'PLAY_RESULTS') {
-                state.step = 'AFTER_RESULT';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.RESULT_ITEM,
                     ttsText: `תוצאה מספר ${idx + 1} מתוך ${state.results.length}: ${current}`,
@@ -730,8 +729,7 @@ async function handleStep(state, query, stateKey, res, did) {
                 // תוצאה הבאה
                 if (idx + 1 < state.results.length) {
                     state.resultIndex = idx + 1;
-                    state.step = 'PLAY_RESULTS';
-                    setState(stateKey, state);
+                    transitionTo(stateKey, state, 'PLAY_RESULTS');
                     return respond(res, buildRead({
                         mbId: MB.RESULT_ITEM,
                         ttsText: `תוצאה מספר ${idx + 2} מתוך ${state.results.length}: ${state.results[idx + 1]}`,
@@ -745,8 +743,7 @@ async function handleStep(state, query, stateKey, res, did) {
                 }) + '&' + buildGoTo('.'));
             } else if (choice === '3') {
                 // ייצוא כל התוצאות ושליחתן למייל
-                state.step = 'ASK_EMAIL_FOR_EXPORT';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'ASK_EMAIL_FOR_EXPORT');
                 return respond(res, buildRead({
                     mbId: MB.ASK_EMAIL_FOR_EXPORT,
                     ttsText: 'לשליחת כל התוצאות לכתובת מייל הקישו 1. לחזרה לתפריט התוצאות הקישו 2.',
@@ -774,8 +771,7 @@ async function handleStep(state, query, stateKey, res, did) {
         case 'ASK_EMAIL_FOR_EXPORT': {
             const choice = query[MB.ASK_EMAIL_FOR_EXPORT];
             if (choice === '1') {
-                state.step = 'TYPE_EMAIL';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'TYPE_EMAIL');
                 return respond(res, buildRead({
                     mbId: MB.TYPE_EMAIL,
                     ttsText: 'אנא הקלידו את כתובת המייל באמצעות המקלדת, ובסיום הקישו סולמית.',
@@ -786,8 +782,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     typingMode: 'EmailKeyboard',
                 }));
             } else if (choice === '2') {
-                state.step = 'AFTER_RESULT';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.AFTER_RESULT_MENU,
                     ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
@@ -830,8 +825,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     results: state.results,
                 });
                 logStep('EMAIL_SENT_OK', { email });
-                state.step = 'AFTER_RESULT';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.EMAIL_SENT_OK,
                     ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לסיום הקישו 9.`,
@@ -841,8 +835,7 @@ async function handleStep(state, query, stateKey, res, did) {
             } catch (err) {
                 console.error('Email export error:', err);
                 logStep('EMAIL_SENT_FAILED', { email, message: err.message });
-                state.step = 'AFTER_RESULT';
-                setState(stateKey, state);
+                transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.EMAIL_SENT_FAILED,
                     ttsText: 'אירעה שגיאה בשליחת המייל, אנא נסו שוב מאוחר יותר. לתפריט התוצאות הקישו כל מקש.',
@@ -870,6 +863,132 @@ async function handleStep(state, query, stateKey, res, did) {
             }) + '&' + buildHangup());
         }
     }
+}
+
+// ============================================================================
+// ייצוא תוצאות למייל - בניית תוכן הייצוא, אימות כתובת מייל, ושליחה בפועל
+// דרך Google Apps Script (Web App) שכתובתו ב-משתנה סביבה GOOGLE_SCRIPT_URL.
+// ============================================================================
+
+// תוויות תצוגה בעברית (למייל בלבד - לא משפיע על הלוגיקה/החישוב עצמם)
+const CONTENT_TYPE_LABELS = {
+    compliments: 'מחמאות',
+    blessings: 'ברכות',
+    motivation: 'משפטי מוטיבציה',
+    sayings: 'פתגמים',
+};
+const GENDER_LABELS = { male: 'זכר', female: 'נקבה' };
+const CALC_TYPE_LABELS = { gematria: 'גימטריה', construction: 'קונסטרוקציה (אותיות השם)' };
+
+/**
+ * אימות בסיסי לכתובת מייל (מספיק לצורך קלט טלפוני מוקלד/מוקלד-T9 - לא
+ * אימות RFC5322 מלא, אלא בדיקת תבנית סבירה: תו-לפני-@, דומיין עם נקודה).
+ */
+function isValidEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+}
+
+/**
+ * בונה את תוכן הייצוא (טקסט רגיל) הכולל את כל התוצאות ופרטי הבקשה -
+ * לשימוש כגוף הודעת המייל וכתוכן קובץ ה-TXT/Word המצורף.
+ */
+function buildExportText({ name, gender, contentType, calcType, totalGematria, results }) {
+    const lines = [];
+    lines.push('מערכת מחשבון מחמאות - תוצאות');
+    lines.push('==============================');
+    lines.push(`שם: ${name}`);
+    lines.push(`מין: ${GENDER_LABELS[gender] || gender}`);
+    lines.push(`סוג תוכן: ${CONTENT_TYPE_LABELS[contentType] || contentType}`);
+    lines.push(`סוג חישוב: ${CALC_TYPE_LABELS[calcType] || calcType}`);
+    if (calcType === 'gematria' && totalGematria !== null && totalGematria !== undefined) {
+        lines.push(`הגימטריה הכוללת של השם: ${totalGematria}`);
+    }
+    lines.push(`מספר תוצאות: ${results.length}`);
+    lines.push('');
+    lines.push('התוצאות:');
+    lines.push('--------');
+    results.forEach((item, idx) => {
+        lines.push(`${idx + 1}. ${item}`);
+        if (calcType === 'gematria') {
+            lines.push(`   (${generateGematriaDetails(item).join(', ')})`);
+        }
+    });
+    lines.push('');
+    lines.push(`נשלח ע"י מערכת מחשבון מחמאות בתאריך ${new Date().toLocaleString('he-IL')}`);
+    return lines.join('\n');
+}
+
+/**
+ * שולח את התוצאות למייל דרך Google Apps Script (Web App שנפרס כ"בצע
+ * כמשתמש: אני" / "מי יכול לגשת: כל אחד") - ראו GOOGLE_APPS_SCRIPT.gs
+ * ומדריך הפריסה המצורף. הכתובת (URL) וכל הסודות הנדרשים מגיעים ממשתני
+ * סביבה של Vercel בלבד (לא מוטמעים בקוד):
+ *   GOOGLE_SCRIPT_URL   - כתובת ה-Web App שנפרס (חובה)
+ *   MAIL_SHARED_SECRET  - מחרוזת סוד משותפת לאימות הבקשה מול ה-Script (חובה)
+ * שם התצוגה של השולח ("מערכת מחשבון מחמאות") מוגדר בתוך ה-Apps Script
+ * עצמו (GmailApp.sendEmail עם הפרמטר name) - לא כאן, כדי שכתובת המייל
+ * בפועל תישאר כתובת ה-Gmail/G Suite שמריץ את ה-Script (כנדרש).
+ */
+async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType, totalGematria, results }) {
+    const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
+    const sharedSecret = process.env.MAIL_SHARED_SECRET || '';
+
+    if (!scriptUrl) {
+        throw new Error('GOOGLE_SCRIPT_URL לא הוגדר במשתני הסביבה של Vercel');
+    }
+
+    const bodyText = buildExportText({ name, gender, contentType, calcType, totalGematria, results });
+    const subject = `תוצאות מחשבון מחמאות - ${name}`;
+
+    const payload = {
+        secret: sharedSecret,
+        toEmail,
+        subject,
+        bodyText,
+        senderDisplayName: 'מערכת מחשבון מחמאות',
+        fileName: `gematria-results-${Date.now()}.txt`,
+    };
+
+    logStep('EMAIL_SEND_REQUEST', { toEmail, scriptUrlHost: safeHost(scriptUrl) });
+
+    let response;
+    try {
+        response = await fetch(scriptUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            redirect: 'follow',
+        });
+    } catch (networkErr) {
+        logStep('EMAIL_SEND_NETWORK_ERROR', { message: networkErr.message });
+        throw new Error(`שגיאת רשת בפנייה לשירות שליחת המייל: ${networkErr.message}`);
+    }
+
+    const rawBody = await response.text();
+    logStep('EMAIL_SEND_RESPONSE', { status: response.status, bodyPreview: rawBody.slice(0, 200) });
+
+    let data;
+    try {
+        data = JSON.parse(rawBody);
+    } catch (parseErr) {
+        // Apps Script Web Apps מחזירים לעתים HTML (למשל דף התחברות/הרשאה)
+        // אם ה-deployment לא הוגדר כ"כל אחד" - זה בדיוק אותו סוג בעיה
+        // שגרמה לשגיאת ה-JSON בתמלול, ולכן חשוב לתעד את זה בבירור.
+        throw new Error(
+            `שירות שליחת המייל (Google Apps Script) החזיר תגובה לא תקינה ` +
+            `(סטטוס ${response.status}). ייתכן שה-Web App לא פרוס עם הרשאת ` +
+            `"כל אחד" (Anyone), או שכתובת ה-URL שגויה. תגובה גולמית: ${rawBody.slice(0, 150)}`
+        );
+    }
+
+    if (!response.ok || data.ok !== true) {
+        throw new Error(data.error || `שירות שליחת המייל החזיר שגיאה (סטטוס ${response.status})`);
+    }
+    return true;
+}
+
+function safeHost(url) {
+    try { return new URL(url).host; } catch (e) { return 'invalid-url'; }
 }
 
 // ============================================================================
