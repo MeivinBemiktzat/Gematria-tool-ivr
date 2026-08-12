@@ -43,7 +43,7 @@ const MB = {
     NO_RESULTS: 'MB1010',           // "לא נמצאו תוצאות מתאימות לשם זה"
     RESULTS_INTRO: 'MB1011',        // "נמצאו ... תוצאות, להלן התוצאה הראשונה"
     RESULT_ITEM: 'MB1012',          // קידומת להשמעת כל תוצאה (מספר + טקסט) - TTS דינמי
-    AFTER_RESULT_MENU: 'MB1013',    // "לשמיעת פירוט הגימטריה הקישו 1, לתוצאה הבאה הקישו 2, לתפריט ראשי הקישו 9"
+    AFTER_RESULT_MENU: 'MB1013',    // "פירוט=1, קודם=7, הבא=9, מייל=3, סיום=0"
     GEMATRIA_DETAIL_INTRO: 'MB1014',// "פירוט הגימטריה:"
     GENERIC_ERROR: 'MB1015',        // "אירעה שגיאה, אנא נסו שוב מאוחר יותר"
     GOODBYE: 'MB1016',              // "תודה ולהתראות"
@@ -84,6 +84,19 @@ function generateGematriaDetails(compliment) {
     );
     lines.push(`סך הכל גימטריה: ${calculateWordGematria(compliment)}`);
     return lines;
+}
+
+function generateSpokenGematriaDetails(text) {
+    const lines = text.split('').map(char => {
+        if (char.trim() === '') return 'רווח';
+        return `האות ${char} שווה ${gematriaMap[char] || 0}`;
+    });
+    lines.push(`סך הכל גימטריה ${calculateWordGematria(text)}`);
+    return lines;
+}
+
+function afterResultMenuText() {
+    return 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הקודמת הקישו 7. לתוצאה הבאה הקישו 9. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 0.';
 }
 
 /**
@@ -483,6 +496,7 @@ async function handleStep(state, query, stateKey, res, did) {
         }
 
         // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה),
+
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
         case 'RECORD_NAME': {
             const recordingPath = getReadValue(query, MB.ASK_RECORD_NAME); // נתיב/URL להקלטה בימות
@@ -558,11 +572,11 @@ async function handleStep(state, query, stateKey, res, did) {
         case 'ANNOUNCE_NAME_GEMATRIA': {
             const choice = getReadValue(query, MB.NAME_GEMATRIA_ANNOUNCE, MB.NAME_GEMATRIA_DETAIL);
             if (choice === '1') {
-                const detailLines = generateGematriaDetails(state.name);
+                const detailLines = generateSpokenGematriaDetails(state.name);
                 logStep('NAME_GEMATRIA_DETAIL_PLAYED', { name: state.name });
                 return respond(res, buildRead({
                     mbId: MB.NAME_GEMATRIA_DETAIL,
-                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join(', ')}`,
+                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join('. ')}`,
                     mode: 'none',
                 }) + '&' + buildGoTo('.'));
             } else if (choice === '2') {
@@ -723,15 +737,33 @@ async function handleStep(state, query, stateKey, res, did) {
                         maxDigits: 1,
                     }));
                 }
-                const detailLines = generateGematriaDetails(current);
+                const detailLines = generateSpokenGematriaDetails(current);
                 return respond(res, buildRead({
                     mbId: MB.GEMATRIA_DETAIL_INTRO,
-                    ttsText: `פירוט הגימטריה: ${detailLines.join(', ')}. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.`,
+                    ttsText: `פירוט הגימטריה: ${detailLines.join('. ')}. ${afterResultMenuText()}`,
                     mode: 'tap',
                     maxDigits: 1,
                     valName: MB.AFTER_RESULT_MENU,
                 }));
-            } else if (choice === '2') {
+            } else if (choice === '7') {
+                // תוצאה קודמת
+                if (idx > 0) {
+                    state.resultIndex = idx - 1;
+                    transitionTo(stateKey, state, 'PLAY_RESULTS');
+                    return respond(res, buildRead({
+                        mbId: MB.RESULT_ITEM,
+                        ttsText: `תוצאה מספר ${idx} מתוך ${state.results.length}: ${state.results[idx - 1]}`,
+                        mode: 'none',
+                    }) + '&' + buildGoTo('.'));
+                }
+                return respond(res, buildRead({
+                    mbId: MB.NO_RESULTS,
+                    ttsText: `זו התוצאה הראשונה. ${afterResultMenuText()}`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                    valName: MB.AFTER_RESULT_MENU,
+                }));
+            } else if (choice === '9') {
                 // תוצאה הבאה
                 if (idx + 1 < state.results.length) {
                     state.resultIndex = idx + 1;
@@ -744,9 +776,11 @@ async function handleStep(state, query, stateKey, res, did) {
                 }
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
-                    ttsText: 'זו הייתה התוצאה האחרונה.',
-                    mode: 'none',
-                }) + '&' + buildGoTo('.'));
+                    ttsText: `זו הייתה התוצאה האחרונה. ${afterResultMenuText()}`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                    valName: MB.AFTER_RESULT_MENU,
+                }));
             } else if (choice === '3') {
                 // ייצוא כל התוצאות ושליחתן למייל
                 transitionTo(stateKey, state, 'ASK_EMAIL_FOR_EXPORT');
@@ -756,7 +790,7 @@ async function handleStep(state, query, stateKey, res, did) {
                     mode: 'tap',
                     maxDigits: 1,
                 }));
-            } else if (choice === '9') {
+            } else if (choice === '0') {
                 clearState(stateKey);
                 return respond(res, buildRead({
                     mbId: MB.GOODBYE,
@@ -767,7 +801,7 @@ async function handleStep(state, query, stateKey, res, did) {
 
             return respond(res, buildRead({
                 mbId: MB.AFTER_RESULT_MENU,
-                ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
+                ttsText: afterResultMenuText(),
                 mode: 'tap',
                 maxDigits: 1,
             }));
@@ -791,7 +825,7 @@ async function handleStep(state, query, stateKey, res, did) {
                 transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.AFTER_RESULT_MENU,
-                    ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
+                    ttsText: afterResultMenuText(),
                     mode: 'tap',
                     maxDigits: 1,
                 }));
@@ -834,7 +868,7 @@ async function handleStep(state, query, stateKey, res, did) {
                 transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.EMAIL_SENT_OK,
-                    ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לסיום הקישו 9.`,
+                    ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. ${afterResultMenuText()}`,
                     mode: 'tap',
                     maxDigits: 1,
                 }));
