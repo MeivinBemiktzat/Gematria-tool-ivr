@@ -60,6 +60,50 @@ const MB = {
 // לוגיקת הגימטריה והקונסטרוקציה - זהה במדויק ל-index.html (script tag)
 // ============================================================================
 
+
+const hebrewLetterNames = {
+    'א': 'אלף', 'ב': 'בית', 'ג': 'גימל', 'ד': 'דלת', 'ה': 'הא',
+    'ו': 'וו', 'ז': 'זין', 'ח': 'חית', 'ט': 'טית', 'י': 'יוד',
+    'כ': 'כף', 'ך': 'כף סופית', 'ל': 'למד', 'מ': 'מם', 'ם': 'מם סופית',
+    'נ': 'נון', 'ן': 'נון סופית', 'ס': 'סמך', 'ע': 'עין', 'פ': 'פא',
+    'ף': 'פא סופית', 'צ': 'צדי', 'ץ': 'צדי סופית', 'ק': 'קוף',
+    'ר': 'ריש', 'ש': 'שין', 'ת': 'תו'
+};
+
+const hebrewOnes = ['', 'אחת', 'שתיים', 'שלוש', 'ארבע', 'חמש', 'שש', 'שבע', 'שמונה', 'תשע'];
+const hebrewTens = ['', 'עשר', 'עשרים', 'שלושים', 'ארבעים', 'חמישים', 'שישים', 'שבעים', 'שמונים', 'תשעים'];
+const hebrewHundreds = ['', 'מאה', 'מאתיים', 'שלוש מאות', 'ארבע מאות', 'חמש מאות', 'שש מאות', 'שבע מאות', 'שמונה מאות', 'תשע מאות'];
+const hebrewTeens = {
+    10: 'עשר', 11: 'אחת עשרה', 12: 'שתים עשרה', 13: 'שלוש עשרה',
+    14: 'ארבע עשרה', 15: 'חמש עשרה', 16: 'שש עשרה', 17: 'שבע עשרה',
+    18: 'שמונה עשרה', 19: 'תשע עשרה'
+};
+
+function numberToHebrewWords(num) {
+    const n = Number(num) || 0;
+    if (n === 0) return 'אפס';
+    if (n < 0) return `מינוס ${numberToHebrewWords(Math.abs(n))}`;
+    if (n < 10) return hebrewOnes[n];
+    if (n < 20) return hebrewTeens[n];
+    if (n < 100) {
+        const tens = Math.floor(n / 10);
+        const ones = n % 10;
+        return ones ? `${hebrewTens[tens]} ו${hebrewOnes[ones]}` : hebrewTens[tens];
+    }
+    if (n < 1000) {
+        const hundreds = Math.floor(n / 100);
+        const rest = n % 100;
+        return rest ? `${hebrewHundreds[hundreds]} ו${numberToHebrewWords(rest)}` : hebrewHundreds[hundreds];
+    }
+    if (n < 10000) {
+        const thousands = Math.floor(n / 1000);
+        const rest = n % 1000;
+        const thousandsText = thousands === 1 ? 'אלף' : `${numberToHebrewWords(thousands)} אלפים`;
+        return rest ? `${thousandsText} ו${numberToHebrewWords(rest)}` : thousandsText;
+    }
+    return String(n);
+}
+
 const gematriaMap = {
     'א': 1, 'ב': 2, 'ג': 3, 'ד': 4, 'ה': 5, 'ו': 6, 'ז': 7, 'ח': 8, 'ט': 9,
     'י': 10, 'כ': 20, 'ך': 20, 'ל': 30, 'מ': 40, 'ם': 40, 'נ': 50, 'ן': 50,
@@ -88,6 +132,12 @@ function generateGematriaDetails(compliment) {
 
 function generateSpokenGematriaDetails(text) {
     const lines = text.split('').map(char => {
+        const value = gematriaMap[char] || 0;
+        if (char.trim() === '') return `רווח שווה ${numberToHebrewWords(value)}`;
+        const letterName = hebrewLetterNames[char] || char;
+        return `האות ${letterName} שווה ${numberToHebrewWords(value)}`;
+    });
+    lines.push(`סך הכל גימטריה ${numberToHebrewWords(calculateWordGematria(text))}`);
         if (char.trim() === '') return 'רווח';
         return `האות ${char} שווה ${gematriaMap[char] || 0}`;
     });
@@ -446,6 +496,7 @@ module.exports = async (req, res) => {
 async function handleStep(state, query, stateKey, res, did) {
     switch (state.step) {
 
+
         case 'MENU_NAME_METHOD': {
             const choice = getReadValue(query, MB.MENU_NAME_INPUT);
             if (choice === '1') {
@@ -496,6 +547,7 @@ async function handleStep(state, query, stateKey, res, did) {
         }
 
         // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה),
+
 
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
         case 'RECORD_NAME': {
@@ -576,6 +628,12 @@ async function handleStep(state, query, stateKey, res, did) {
                 logStep('NAME_GEMATRIA_DETAIL_PLAYED', { name: state.name });
                 return respond(res, buildRead({
                     mbId: MB.NAME_GEMATRIA_DETAIL,
+                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join('. ')}. לשמיעת הפירוט שוב הקישו 1. להמשך הקישו 2.`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                    valName: MB.NAME_GEMATRIA_ANNOUNCE,
+                }));
+
                     ttsText: `פירוט הגימטריה של השם: ${detailLines.join('. ')}`,
                     mode: 'none',
                 }) + '&' + buildGoTo('.'));
@@ -1159,6 +1217,7 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
 function safeHost(url) {
     try { return new URL(url).host; } catch (e) { return 'invalid-url'; }
 }
+
 
 
 // ============================================================================
