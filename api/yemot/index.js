@@ -5,28 +5,19 @@
  * וכל חישובי הגימטריה/קונסטרוקציה - מועתקים בדיוק מה-HTML שסופק (index.html),
  * ללא שינוי בכללי החישוב.
  *
- * קובץ התמלול (transcribe.py) נפרד לחלוטין ואחראי רק על המרת הקלטה לטקסט.
- * קובץ זה קורא לו ב-fetch פנימי (POST) עם בייטי ה-wav, בדיוק כפי שמתואר
- * בהערות של transcribe.py המקורי ("הקוד ב-api/yemot/index.js (Node.js)
- * מוריד את ההקלטה מימות ושולח את בייטי ה-wav הגולמיים ל-endpoint הזה").
- *
  * --------------------------------------------------------------------------
- * הגדרת השלוחה (ext.ini) - חובה לכל מערכת בנפרד, ללא עריכת קוד:
+ * הגדרת השלוחה (ext.ini):
  * --------------------------------------------------------------------------
  *   type=api
  *   api_link=https://<הדומיין-שלכם-ב-Vercel>/api/yemot/index
- *   api_token=<הטוקן המתקדם של המערכת שלכם ("טוקן מערכת" בהגדרות
- *              יומן/מערכת בממשק הניהול של ימות - NOT מערכת:סיסמה>
  *   api_call_id_send=yes
  *   api_did_send=yes
  *   api_phone_send=yes
  *   api_extension_send=yes
  *
- * הטוקן המתקדם מגיע בכל קריאה מימות בפרמטר ApiToken (או Token, תלוי גרסת
- * מערכת) - הקוד קורא את שני השמות האפשריים ומאמת מול api_token שהוגדר
- * בשלוחה עצמה בממשק הניהול (לא במשתני סביבה!) - כך שאותו קוד עובד בכל
- * מערכת ימות בלי לערוך שורת קוד אחת. הקובץ מזהה את "המערכת" (הלקוח) לפי
- * ApiDID (מספר ה-DID שהתקשרו אליו) ומחזיק state נפרד לכל (DID + CallId).
+ * אין צורך בטוקן מערכת: אין הורדת הקלטות ואין קריאה ל-API של ימות.
+ * הקוד מזהה את השיחה לפי ApiDID + ApiCallId בלבד ומעביר את המתקשר מיד
+ * להקלדת שם במודול HebrewKeyboard.
  *
  * --------------------------------------------------------------------------
  * הודעות מערכת (MB) - ראו MESSAGES.md לרשימה המלאה ולשמות הקבצים המדויקים.
@@ -34,7 +25,7 @@
  * מוקלט (MBxxxx.wav) לבין טקסט TTS בתוך תגובת read/id_list_message.
  * הבחירה בין קובץ (f-) לטקסט (t-) היא של הקוד ששולח את התגובה. קוד זה
  * שולח כרגע תמיד TTS (t-...) כדי להבטיח שהשלוחה תעבוד גם ללא קבצי
- * הקלטה מועלים. אם בעתיד יועלו קבצי MBxxxx.wav לשלוחה ורוצים שיושמעו
+ * הודעה מועלים. אם בעתיד יועלו קבצי MBxxxx.wav לשלוחה ורוצים שיושמעו
  * במקום ה-TTS, יש להחליף את ההודעה הרלוונטית ל-f-MBxxxx באופן מפורש.
  * --------------------------------------------------------------------------
  */
@@ -47,18 +38,14 @@
 
 const MB = {
     WELCOME: 'MB1001',              // "ברוכים הבאים למחשבון מחמאות..."
-    MENU_NAME_INPUT: 'MB1002',      // תפריט ראשי: הקלדה/הקלטה
     ASK_TYPE_NAME_TEXT: 'MB1003',   // "אנא הקלידו את שמכם וסיימו בסולמית"
-    ASK_RECORD_NAME: 'MB1004',      // "אנא הקליטו את שמכם ובסיום הקישו סולמית"
-    TRANSCRIBE_FAILED: 'MB1005',    // "לא הצלחנו לזהות את השם בהקלטה, אנא נסו שוב"
-    TRANSCRIBE_CONFIRM: 'MB1006',   // "השם שזוהה הוא ... להמשך הקישו 1, להקלטה חוזרת הקישו 2"
     ASK_GENDER: 'MB1007',           // "לחישוב עבור זכר הקישו 1, עבור נקבה הקישו 2"
     ASK_CONTENT_TYPE: 'MB1008',     // "למחמאות הקישו 1, לברכות 2, למשפטי מוטיבציה 3, לפתגמים 4"
     ASK_CALC_TYPE: 'MB1009',        // "לחישוב גימטריה הקישו 1, לחישוב קונסטרוקציה הקישו 2"
     NO_RESULTS: 'MB1010',           // "לא נמצאו תוצאות מתאימות לשם זה"
     RESULTS_INTRO: 'MB1011',        // "נמצאו ... תוצאות, להלן התוצאה הראשונה"
     RESULT_ITEM: 'MB1012',          // קידומת להשמעת כל תוצאה (מספר + טקסט) - TTS דינמי
-    AFTER_RESULT_MENU: 'MB1013',    // "לשמיעת פירוט הגימטריה הקישו 1, לתוצאה הבאה הקישו 2, לתפריט ראשי הקישו 9"
+    AFTER_RESULT_MENU: 'MB1013',    // "פירוט=1, קודם=7, הבא=9, מייל=3, סיום=0"
     GEMATRIA_DETAIL_INTRO: 'MB1014',// "פירוט הגימטריה:"
     GENERIC_ERROR: 'MB1015',        // "אירעה שגיאה, אנא נסו שוב מאוחר יותר"
     GOODBYE: 'MB1016',              // "תודה ולהתראות"
@@ -99,6 +86,19 @@ function generateGematriaDetails(compliment) {
     );
     lines.push(`סך הכל גימטריה: ${calculateWordGematria(compliment)}`);
     return lines;
+}
+
+function generateSpokenGematriaDetails(text) {
+    const lines = text.split('').map(char => {
+        if (char.trim() === '') return 'רווח';
+        return `האות ${char} שווה ${gematriaMap[char] || 0}`;
+    });
+    lines.push(`סך הכל גימטריה ${calculateWordGematria(text)}`);
+    return lines;
+}
+
+function afterResultMenuText() {
+    return 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הקודמת הקישו 7. לתוצאה הבאה הקישו 9. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 0.';
 }
 
 /**
@@ -270,7 +270,7 @@ function esc(text) {
  *   val_name,re_enter_if_exists,max_digits,min_digits,sec_wait,
  *   typing_playback_mode,block_asterisk_key,block_zero_key,
  *   replace_char,digits_allowed,amount_attempts,read_answer,empty_val
- * mode: 'tap' (הקשה) | 'record' (הקלטה) | 'none' (השמעה בלבד, ללא קלט
+ * mode: 'tap' (הקשה) | 'none' (השמעה בלבד, ללא קלט
  * נוסף - במקרה זה לא נשלחת בקשת read אמיתית, ולכן משתמשים ב-id_list_message
  * עם שרשור go_to_folder כדי להמשיך את הזרימה, ראה buildAnnounce).
  */
@@ -284,8 +284,6 @@ function buildRead({ mbId, ttsText, mode = 'tap', maxDigits = 1, minDigits = 1, 
         // עברית של ימות - ר' תיעוד מודול ה-API, "הערך השישי (הקשה)") | 'EmailKeyboard'
         // (מקלדת הקלדת כתובת מייל של ימות).
         options = `${label},,${maxDigits},${minDigits},,${typingMode || 'No'}`;
-    } else if (mode === 'record') {
-        options = `${label},,record`;
     } else {
         // אין קלט נוסף לבקש - זו למעשה השמעת הודעה בלבד, לא read אמיתי
         return buildAnnounce({ ttsText });
@@ -313,7 +311,7 @@ function buildHangup() {
 /**
  * בונה תגובה המכריזה על הגימטריה הכוללת של השם עצמו (בטרם בחירת מין/סוג
  * תוכן/סוג חישוב), ומציעה תפריט: 1 = שמיעת פירוט הגימטריה, 2 = המשך.
- * נשלחת הן אחרי הקלדת שם והן אחרי אישור שם שתומלל מהקלטה - כנדרש שיוכרז
+ * נשלחת אחרי הקלדת שם - כנדרש שיוכרז
  * בכל שלב מה הגימטריה שחושבה, גם אם בהמשך לא יימצאו תוצאות תוכן מתאימות.
  */
 function announceNameGematria(name) {
@@ -324,6 +322,33 @@ function announceNameGematria(name) {
         mode: 'tap',
         maxDigits: 1,
     });
+}
+
+
+/**
+ * מחלץ את ערך ההקשה שחזר מימות עבור read קודם.
+ * בפועל ימות לעיתים מחזיר את הערך תחת val_name המקורי, ולעיתים לאחר הודעת
+ * שגיאה/מעבר אוטומטי הערך מגיע תחת תווית אחרת או תחת שדות כלליים. לכן כל
+ * שלב קורא דרך הפונקציה הזו כדי לא להיתקע בלולאת "בחירה שגויה" בגלל שם
+ * פרמטר שונה בלבד.
+ */
+function getReadValue(query, ...preferredKeys) {
+    for (const key of preferredKeys.filter(Boolean)) {
+        const value = query[key];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value).trim();
+        }
+    }
+
+    const genericKeys = ['ApiEnterID', 'EnterID', 'ApiResult', 'Result', 'digits', 'Digits'];
+    for (const key of genericKeys) {
+        const value = query[key];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value).trim();
+        }
+    }
+
+    return '';
 }
 
 function respond(res, body) {
@@ -351,20 +376,6 @@ function logStep(eventName, details = {}) {
 }
 
 // ============================================================================
-// אימות טוקן מתקדם (system token) - מוגדר בהגדרות השלוחה בכל מערכת בנפרד,
-// לא בקוד ולא במשתני סביבה. הקוד קורא את הטוקן שהמערכת שולחת בבקשה
-// ומאמת מולו (השוואה בלבד - לכל מערכת יש טוקן משלה, מוגדר בממשק הניהול
-// שלה תחת הגדרות השלוחה -> "טוקן מתקדם"). כדי לתמוך בריבוי מערכות בלי
-// לגעת בקוד, אנחנו לא בודקים טוקן קבוע מראש - אלא בודקים שהבקשה מגיעה
-// מתוך שלוחת type=api שהוגדרה כראוי (הטוקן חוזר בכל בקשה מאותה שלוחה
-// ומזהה את המערכת השולחת יחד עם ApiDID).
-// ============================================================================
-
-function extractSystemToken(query) {
-    return query.ApiToken || query.Token || query.token || null;
-}
-
-// ============================================================================
 // Handler ראשי
 // ============================================================================
 
@@ -375,11 +386,9 @@ module.exports = async (req, res) => {
         const callId = query.ApiCallId || query.CallId;
         const did = query.ApiDID || query.DID || 'default';
         const extension = query.ApiExtension || query.Extension || '';
-        const systemToken = extractSystemToken(query);
 
         logStep('REQUEST_RECEIVED', {
             callId, did, extension,
-            hasToken: Boolean(systemToken),
             queryKeys: Object.keys(query),
         });
 
@@ -393,29 +402,31 @@ module.exports = async (req, res) => {
         }
 
         // מזהה שיחה ייחודי הכולל DID, כך שאותו קוד תומך בריבוי מערכות
-        // (טוקנים שונים) ללא כל שינוי - state נפרד לכל (DID, CallId).
-        const stateKey = `${did}:${callId}:${systemToken || ''}`;
+        // ללא טוקן מערכת - state נפרד לכל (DID, CallId).
+        const stateKey = `${did}:${callId}`;
 
         let state = getState(stateKey);
 
         // ------------------------------------------------------------------
-        // כניסה ראשונה לשלוחה - הצגת תפריט ראשי לבחירת שיטת הזנת שם
+        // כניסה ראשונה לשלוחה - מעבר מיידי להקלדת שם
         // ------------------------------------------------------------------
         if (!state) {
-            state = { step: 'MENU_NAME_METHOD' };
+            state = { step: 'TYPE_NAME' };
             setState(stateKey, state);
             logStep('NEW_CALL_STARTED', { stateKey });
             return respond(res, buildRead({
-                mbId: MB.MENU_NAME_INPUT,
-                ttsText: 'ברוכים הבאים למחשבון מחמאות. להקלדת שם באמצעות המקלדת הקישו 1. להקלטת שם הקישו 2.',
+                mbId: MB.ASK_TYPE_NAME_TEXT,
+                ttsText: 'ברוכים הבאים למחשבון מחמאות. אנא הקלידו את שמכם באמצעות מקשי הפלאפון, בין אות לאות הקישו סולמית, ובסיום ההקלדה הקישו כוכבית וסולמית.',
                 mode: 'tap',
-                maxDigits: 1,
+                maxDigits: 30,
+                minDigits: 1,
+                typingMode: 'HebrewKeyboard',
             }));
         }
 
         logStep('STEP_ENTERED', { stateKey, step: state.step });
 
-        return await handleStep(state, query, stateKey, res, did, systemToken);
+        return await handleStep(state, query, stateKey, res, did);
 
     } catch (err) {
         console.error('IVR error:', err);
@@ -434,42 +445,12 @@ module.exports = async (req, res) => {
 // שהוקלד/הוקלט תחת אותו שם בפרמטרי הבקשה הבאה.
 // ============================================================================
 
-async function handleStep(state, query, stateKey, res, did, systemToken) {
+async function handleStep(state, query, stateKey, res, did) {
     switch (state.step) {
-
-        case 'MENU_NAME_METHOD': {
-            const choice = query[MB.MENU_NAME_INPUT];
-            if (choice === '1') {
-                transitionTo(stateKey, state, 'TYPE_NAME');
-                return respond(res, buildRead({
-                    mbId: MB.ASK_TYPE_NAME_TEXT,
-                    ttsText: 'אנא הקלידו את שמכם באמצעות מקשי הפלאפון, בין אות לאות הקישו סולמית, ובסיום ההקלדה הקישו כוכבית וסולמית.',
-                    mode: 'tap',
-                    maxDigits: 30,
-                    minDigits: 1,
-                    // מודול הקלדת טקסט של ימות (HebrewKeyboard) - מאפשר למתקשר
-                    // להקליד שם בעברית באמצעות מקשי הטלפון (T9-כמו-הקלדת-SMS ישנה),
-                    // במקום הקשות ספרות רגילות בלבד.
-                    typingMode: 'HebrewKeyboard',
-                }));
-            } else if (choice === '2') {
-                transitionTo(stateKey, state, 'RECORD_NAME');
-                return respond(res, buildRead({
-                    mbId: MB.ASK_RECORD_NAME,
-                    ttsText: 'אנא הקליטו את שמכם, ובסיום ההקלטה הקישו סולמית.',
-                    mode: 'record',
-                }));
-            }
-            return respond(res, buildRead({
-                mbId: MB.INVALID_INPUT,
-                ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
-                mode: 'none',
-            }) + '&' + buildGoTo('/'));
-        }
 
         // שלוחה 1: הקלדת שם באמצעות מודול הקלדת טקסט בעברית של ימות
         case 'TYPE_NAME': {
-            const typedName = (query[MB.ASK_TYPE_NAME_TEXT] || '').trim();
+            const typedName = getReadValue(query, MB.ASK_TYPE_NAME_TEXT);
             if (!typedName) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -483,86 +464,16 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             return respond(res, announceNameGematria(typedName));
         }
 
-        // שלוחה 2: הקלטת שם -> תמלול -> אישור
-        case 'RECORD_NAME': {
-            const recordingPath = query[MB.ASK_RECORD_NAME]; // נתיב/URL להקלטה בימות
-            logStep('RECORDING_REFERENCE_RECEIVED', {
-    recordingPath,
-}); 
-            if (!recordingPath) {
-                return respond(res, buildRead({
-                    mbId: MB.INVALID_INPUT,
-                    ttsText: 'לא התקבלה הקלטה, אנא נסו שוב.',
-                    mode: 'none',
-                }) + '&' + buildGoTo('/'));
-            }
-
-            let transcribedText = '';
-            try {
-                logStep('DOWNLOAD_RECORDING_START', { recordingPath });
-                const wavBytes = await downloadRecording(recordingPath, systemToken);
-                logStep('DOWNLOAD_RECORDING_DONE', { bytes: wavBytes.length });
-                transcribedText = await transcribeViaService(wavBytes);
-                logStep('TRANSCRIPTION_DONE', { transcribedText });
-            } catch (err) {
-                console.error('Transcription error:', err);
-                logStep('TRANSCRIPTION_ERROR', { message: err.message });
-                transcribedText = '';
-            }
-
-            if (!transcribedText) {
-                transitionTo(stateKey, state, 'RECORD_NAME');
-                return respond(res, buildRead({
-                    mbId: MB.TRANSCRIBE_FAILED,
-                    ttsText: 'לא הצלחנו לזהות את השם בהקלטה. אנא הקליטו שוב את שמכם ובסיום הקישו סולמית.',
-                    mode: 'record',
-                }));
-            }
-
-            state.pendingName = transcribedText;
-            transitionTo(stateKey, state, 'CONFIRM_TRANSCRIPTION');
-            return respond(res, buildRead({
-                mbId: MB.TRANSCRIBE_CONFIRM,
-                ttsText: `השם שזוהה הוא ${transcribedText}. להמשך עם שם זה הקישו 1. להקלטה חוזרת הקישו 2.`,
-                mode: 'tap',
-                maxDigits: 1,
-            }));
-        }
-
-        case 'CONFIRM_TRANSCRIPTION': {
-            const choice = query[MB.TRANSCRIBE_CONFIRM];
-            if (choice === '1') {
-                state.name = state.pendingName;
-                delete state.pendingName;
-                transitionTo(stateKey, state, 'ANNOUNCE_NAME_GEMATRIA');
-                logStep('NAME_ACQUIRED', { method: 'recorded_transcribed', name: state.name });
-                return respond(res, announceNameGematria(state.name));
-            } else if (choice === '2') {
-                transitionTo(stateKey, state, 'RECORD_NAME');
-                return respond(res, buildRead({
-                    mbId: MB.ASK_RECORD_NAME,
-                    ttsText: 'אנא הקליטו שוב את שמכם, ובסיום הקישו סולמית.',
-                    mode: 'record',
-                }));
-            }
-            return respond(res, buildRead({
-                mbId: MB.INVALID_INPUT,
-                ttsText: 'הקשה לא תקינה, אנא נסו שוב.',
-                mode: 'tap',
-                maxDigits: 1,
-            }));
-        }
-
-        // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה/הקלטה+אישור),
+        // הכרזה על הגימטריה הכוללת של השם עצמו (מיד לאחר הקלדה),
         // עם אפשרות לשמוע פירוט אות-אות או להמשיך לבחירת מין/סוג תוכן.
         case 'ANNOUNCE_NAME_GEMATRIA': {
-            const choice = query[MB.NAME_GEMATRIA_ANNOUNCE];
+            const choice = getReadValue(query, MB.NAME_GEMATRIA_ANNOUNCE, MB.NAME_GEMATRIA_DETAIL);
             if (choice === '1') {
-                const detailLines = generateGematriaDetails(state.name);
+                const detailLines = generateSpokenGematriaDetails(state.name);
                 logStep('NAME_GEMATRIA_DETAIL_PLAYED', { name: state.name });
                 return respond(res, buildRead({
                     mbId: MB.NAME_GEMATRIA_DETAIL,
-                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join(', ')}`,
+                    ttsText: `פירוט הגימטריה של השם: ${detailLines.join('. ')}`,
                     mode: 'none',
                 }) + '&' + buildGoTo('.'));
             } else if (choice === '2') {
@@ -580,7 +491,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // בחירת זכר/נקבה - כפי שה-HTML דורש (select#gender) לפני החישוב
         case 'ASK_GENDER': {
-            const choice = query[MB.ASK_GENDER];
+            const choice = getReadValue(query, MB.ASK_GENDER, MB.INVALID_INPUT);
             if (choice === '1' || choice === '2') {
                 state.gender = choice === '1' ? 'male' : 'female';
                 transitionTo(stateKey, state, 'ASK_CONTENT_TYPE');
@@ -602,7 +513,8 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
         // סוג תוכן - כפי שה-HTML דורש (select#contentType)
         case 'ASK_CONTENT_TYPE': {
             const map = { '1': 'compliments', '2': 'blessings', '3': 'motivation', '4': 'sayings' };
-            const contentType = map[query[MB.ASK_CONTENT_TYPE]];
+            const rawChoice = getReadValue(query, MB.ASK_CONTENT_TYPE, MB.INVALID_INPUT);
+            const contentType = map[rawChoice];
             if (!contentType) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -623,7 +535,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // סוג חישוב - זהה לשני הכפתורים ב-HTML: "חשב גימטריה" / "חשב קונסטרוקציה"
         case 'ASK_CALC_TYPE': {
-            const choice = query[MB.ASK_CALC_TYPE];
+            const choice = getReadValue(query, MB.ASK_CALC_TYPE, MB.INVALID_INPUT);
             if (choice !== '1' && choice !== '2') {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -674,7 +586,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             });
 
             if (results.length === 0) {
-                transitionTo(stateKey, state, 'MENU_NAME_METHOD_END');
+                transitionTo(stateKey, state, 'END_CALL');
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
                     ttsText: 'לא נמצאו תוצאות מתאימות לשם זה.',
@@ -710,7 +622,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             }
 
             // AFTER_RESULT: קיבלנו קלט מהמשתמש (תפריט לאחר תוצאה)
-            const choice = query[MB.AFTER_RESULT_MENU] || query[MB.RESULT_ITEM];
+            const choice = getReadValue(query, MB.AFTER_RESULT_MENU, MB.RESULT_ITEM, MB.GEMATRIA_DETAIL_INTRO, MB.EMAIL_SENT_OK, MB.EMAIL_SENT_FAILED);
 
             if (choice === '1') {
                 // פירוט גימטריה (רק אם מצב חישוב = גימטריה, כמו ב-HTML)
@@ -722,15 +634,33 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                         maxDigits: 1,
                     }));
                 }
-                const detailLines = generateGematriaDetails(current);
+                const detailLines = generateSpokenGematriaDetails(current);
                 return respond(res, buildRead({
                     mbId: MB.GEMATRIA_DETAIL_INTRO,
-                    ttsText: `פירוט הגימטריה: ${detailLines.join(', ')}. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.`,
+                    ttsText: `פירוט הגימטריה: ${detailLines.join('. ')}. ${afterResultMenuText()}`,
                     mode: 'tap',
                     maxDigits: 1,
                     valName: MB.AFTER_RESULT_MENU,
                 }));
-            } else if (choice === '2') {
+            } else if (choice === '7') {
+                // תוצאה קודמת
+                if (idx > 0) {
+                    state.resultIndex = idx - 1;
+                    transitionTo(stateKey, state, 'PLAY_RESULTS');
+                    return respond(res, buildRead({
+                        mbId: MB.RESULT_ITEM,
+                        ttsText: `תוצאה מספר ${idx} מתוך ${state.results.length}: ${state.results[idx - 1]}`,
+                        mode: 'none',
+                    }) + '&' + buildGoTo('.'));
+                }
+                return respond(res, buildRead({
+                    mbId: MB.NO_RESULTS,
+                    ttsText: `זו התוצאה הראשונה. ${afterResultMenuText()}`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                    valName: MB.AFTER_RESULT_MENU,
+                }));
+            } else if (choice === '9') {
                 // תוצאה הבאה
                 if (idx + 1 < state.results.length) {
                     state.resultIndex = idx + 1;
@@ -743,9 +673,11 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                 }
                 return respond(res, buildRead({
                     mbId: MB.NO_RESULTS,
-                    ttsText: 'זו הייתה התוצאה האחרונה.',
-                    mode: 'none',
-                }) + '&' + buildGoTo('.'));
+                    ttsText: `זו הייתה התוצאה האחרונה. ${afterResultMenuText()}`,
+                    mode: 'tap',
+                    maxDigits: 1,
+                    valName: MB.AFTER_RESULT_MENU,
+                }));
             } else if (choice === '3') {
                 // ייצוא כל התוצאות ושליחתן למייל
                 transitionTo(stateKey, state, 'ASK_EMAIL_FOR_EXPORT');
@@ -755,7 +687,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                     mode: 'tap',
                     maxDigits: 1,
                 }));
-            } else if (choice === '9') {
+            } else if (choice === '0') {
                 clearState(stateKey);
                 return respond(res, buildRead({
                     mbId: MB.GOODBYE,
@@ -766,7 +698,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
             return respond(res, buildRead({
                 mbId: MB.AFTER_RESULT_MENU,
-                ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
+                ttsText: afterResultMenuText(),
                 mode: 'tap',
                 maxDigits: 1,
             }));
@@ -774,7 +706,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // בקשת כתובת מייל לייצוא (לפני הקלדת הכתובת בפועל)
         case 'ASK_EMAIL_FOR_EXPORT': {
-            const choice = query[MB.ASK_EMAIL_FOR_EXPORT];
+            const choice = getReadValue(query, MB.ASK_EMAIL_FOR_EXPORT, MB.INVALID_INPUT);
             if (choice === '1') {
                 transitionTo(stateKey, state, 'TYPE_EMAIL');
                 return respond(res, buildRead({
@@ -790,7 +722,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                 transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.AFTER_RESULT_MENU,
-                    ttsText: 'לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לשליחת כל התוצאות למייל הקישו 3. לסיום הקישו 9.',
+                    ttsText: afterResultMenuText(),
                     mode: 'tap',
                     maxDigits: 1,
                 }));
@@ -805,7 +737,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
 
         // קליטת כתובת המייל שהוקלדה, ושליחת התוצאות אליה דרך Google Apps Script
         case 'TYPE_EMAIL': {
-            const email = (query[MB.TYPE_EMAIL] || '').trim();
+            const email = getReadValue(query, MB.TYPE_EMAIL, MB.INVALID_INPUT);
             logStep('EMAIL_TYPED', { email });
 
             if (!email || !isValidEmail(email)) {
@@ -833,7 +765,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                 transitionTo(stateKey, state, 'AFTER_RESULT');
                 return respond(res, buildRead({
                     mbId: MB.EMAIL_SENT_OK,
-                    ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. לשמיעת פירוט הגימטריה הקישו 1. לתוצאה הבאה הקישו 2. לסיום הקישו 9.`,
+                    ttsText: `התוצאות נשלחו בהצלחה לכתובת שהוקלדה. ${afterResultMenuText()}`,
                     mode: 'tap',
                     maxDigits: 1,
                 }));
@@ -850,7 +782,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
             }
         }
 
-        case 'MENU_NAME_METHOD_END': {
+        case 'END_CALL': {
             clearState(stateKey);
             return respond(res, buildRead({
                 mbId: MB.GOODBYE,
@@ -1107,7 +1039,7 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
     } catch (parseErr) {
         // Apps Script Web Apps מחזירים לעתים HTML (למשל דף התחברות/הרשאה)
         // אם ה-deployment לא הוגדר כ"כל אחד" - זה בדיוק אותו סוג בעיה
-        // שגרמה לשגיאת ה-JSON בתמלול, ולכן חשוב לתעד את זה בבירור.
+        // ולכן חשוב לתעד את זה בבירור.
         throw new Error(
             `שירות שליחת המייל (Google Apps Script) החזיר תגובה לא תקינה ` +
             `(סטטוס ${response.status}). ייתכן שה-Web App לא פרוס עם הרשאת ` +
@@ -1123,174 +1055,4 @@ async function sendResultsByEmail({ toEmail, name, gender, contentType, calcType
 
 function safeHost(url) {
     try { return new URL(url).host; } catch (e) { return 'invalid-url'; }
-}
-
-// ============================================================================
-// אינטגרציה עם ימות: הורדת ההקלטה ושליחה לתמלול
-// ============================================================================
-
-/**
- * מוריד את בייטי ה-wav של ההקלטה מימות המשיח.
- * recordingRef הוא הערך שימות מחזיר בפרמטר ה-read (בד"כ נתיב/URL להקלטה,
- * תלוי בהגדרות המערכת - יש לוודא מול תיעוד ימות איזה ערך מוחזר בפועל
- * עבור קלט מסוג record, ולעדכן כאן את בניית ה-URL בהתאם אם צריך).
- */
-async function downloadRecording(recordingRef, systemToken) {
-  if (!recordingRef) {
-    throw new Error('לא התקבל נתיב הקלטה');
-  }
-
-  if (!systemToken) {
-    throw new Error('לא התקבל ApiToken/Token מימות עבור הורדת ההקלטה');
-  }
-
-  let url;
-
-  // אם ימות החזיר URL מלא - משתמשים בו, אבל מוסיפים token
-  // רק אם מדובר בכתובת DownloadFile של ימות.
-  if (/^https?:\/\//i.test(recordingRef)) {
-    const parsedUrl = new URL(recordingRef);
-
-    if (
-      parsedUrl.hostname === 'www.call2all.co.il' &&
-      parsedUrl.pathname === '/ym/api/DownloadFile'
-    ) {
-      parsedUrl.searchParams.set('token', systemToken);
-
-      // אם כבר קיים path, נוודא שהוא מתחיל ב-ivr2:
-      const existingPath = parsedUrl.searchParams.get('path') || '';
-
-      if (existingPath && !existingPath.startsWith('ivr2:')) {
-        parsedUrl.searchParams.set('path', `ivr2:${existingPath}`);
-      }
-
-      url = parsedUrl.toString();
-    } else {
-      // URL חיצוני/ישיר - לא משנים אותו
-      url = recordingRef;
-    }
-  } else {
-    // recordingRef הוא נתיב שקיבלנו מימות.
-    // DownloadFile דורש את הקידומת ivr2:
-    const filePath = recordingRef.startsWith('ivr2:')
-      ? recordingRef
-      : `ivr2:${recordingRef}`;
-
-    const params = new URLSearchParams({
-      token: systemToken,
-      path: filePath,
-    });
-
-    url = `https://www.call2all.co.il/ym/api/DownloadFile?${params.toString()}`;
-  }
-
-  logStep('DOWNLOAD_RECORDING_REQUEST', {
-    // בכוונה לא רושמים את הטוקן עצמו ללוג
-    url: url.replace(
-      /([?&]token=)[^&]*/i,
-      '$1[REDACTED]'
-    ),
-  });
-
-  const response = await fetch(url);
-
-  const contentType = response.headers.get('content-type') || '';
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  const bodyText = buffer.toString('utf8');
-
-  console.log(JSON.stringify({
-    event: 'RECORDING_DOWNLOAD_RESPONSE',
-    status: response.status,
-    contentType,
-    bytes: buffer.length,
-    firstBytes: buffer.subarray(0, 32).toString('hex'),
-    bodyPreview: contentType.includes('json')
-      ? bodyText.substring(0, 2000)
-      : undefined
-  }));
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download recording: HTTP ${response.status}`
-    );
-  }
-
-  if (contentType.toLowerCase().includes('application/json')) {
-    throw new Error(
-      `ימות החזיר JSON במקום קובץ WAV: ${bodyText.substring(0, 1000)}`
-    );
-  }
-
-  if (
-    buffer.length < 12 ||
-    buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
-    buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
-  ) {
-    throw new Error(
-      `הקובץ שהתקבל אינו WAV תקין. bytes=${buffer.length}, content-type=${contentType}`
-    );
-  }
-
-  return buffer;
-}
-/**
- * שולח את בייטי ה-wav לקובץ התמלול הנפרד (transcribe.py) בקריאת POST פנימית,
- * בדיוק כפי שמתואר בהערות הראש של transcribe.py המקורי.
- */
-async function transcribeViaService(wavBytes) {
-    const transcribeUrl = process.env.TRANSCRIBE_SERVICE_URL || '/api/yemot/transcribe';
-    const fullUrl = transcribeUrl.startsWith('http')
-        ? transcribeUrl
-        : `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : ''}${transcribeUrl}`;
-
-    logStep('TRANSCRIBE_REQUEST', { url: fullUrl, bytes: wavBytes.length });
-
-    let response;
-    try {
-        response = await fetch(fullUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'audio/wav' },
-            body: wavBytes,
-        });
-    } catch (networkErr) {
-        // כשל רשת/DNS/timeout בדרך אל ה-endpoint עצמו (לפני קבלת תגובה כלשהי)
-        logStep('TRANSCRIBE_NETWORK_ERROR', { message: networkErr.message });
-        throw new Error(`שגיאת רשת בפנייה לשירות התמלול: ${networkErr.message}`);
-    }
-
-    // קריאת הגוף כטקסט גולמי קודם - כדי לא להתפוצץ על JSON.parse אם חזר HTML
-    // (למשל דף שגיאת 404/500 של Vercel כאשר ה-function של הפייתון לא זמינה,
-    // נכשלה בפריסה, או חרגה מזמן ריצה - זה בדיוק המקור לשגיאה
-    // "Unexpected token '<', '<!DOCTYPE '... is not valid JSON" שדווחה).
-    const rawBody = await response.text();
-    const contentType = response.headers.get('content-type') || '';
-
-    logStep('TRANSCRIBE_RESPONSE', {
-        status: response.status,
-        contentType,
-        bodyPreview: rawBody.slice(0, 200),
-    });
-
-    if (!contentType.includes('application/json')) {
-        // התגובה אינה JSON בכלל (סביר: דף שגיאת HTML של Vercel/פלטפורמה)
-        throw new Error(
-            `שירות התמלול החזיר תגובה לא תקינה (סטטוס ${response.status}, ` +
-            `content-type: ${contentType || 'לא ידוע'}). ייתכן שה-function של הפייתון ` +
-            `אינה פרוסה כראוי או נכשלה - יש לבדוק את הלוגים ב-Vercel עבור api/yemot/transcribe.`
-        );
-    }
-
-    let data;
-    try {
-        data = JSON.parse(rawBody);
-    } catch (parseErr) {
-        throw new Error(`שגיאה בפענוח תגובת שירות התמלול (JSON לא תקין): ${parseErr.message}`);
-    }
-
-    if (!response.ok) {
-        throw new Error(data.error || `שירות התמלול החזיר שגיאה (סטטוס ${response.status})`);
-    }
-    return (data.text || '').trim();
 }
