@@ -32,7 +32,7 @@
 
 ```ini
 type=api
-api_link=https://your-project.vercel.app/api/yemot/index
+api_link=https://gematria-tool-ivr.vercel.app/api/yemot/index
 api_add_0=token=<הטוקן המתקדם של המערכת הזו - מוגדר בהגדרות השלוחה, לא מערכת:סיסמה>
 api_call_id_send=yes
 api_did_send=yes
