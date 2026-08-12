@@ -443,7 +443,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                 transitionTo(stateKey, state, 'TYPE_NAME');
                 return respond(res, buildRead({
                     mbId: MB.ASK_TYPE_NAME_TEXT,
-                    ttsText: 'אנא הקלידו את שמכם באמצעות מקלדת ההקלדה, ובסיום הקישו סולמית.',
+                    ttsText: 'אנא הקלידו את שמכם באמצעות מקשי הפלאפון, בין אות לאות הקישו סולמית, ובסיום ההקלדה הקישו כוכבית וסולמית.',
                     mode: 'tap',
                     maxDigits: 30,
                     minDigits: 1,
@@ -779,7 +779,7 @@ async function handleStep(state, query, stateKey, res, did, systemToken) {
                 transitionTo(stateKey, state, 'TYPE_EMAIL');
                 return respond(res, buildRead({
                     mbId: MB.TYPE_EMAIL,
-                    ttsText: 'אנא הקלידו את כתובת המייל באמצעות המקלדת, ובסיום הקישו סולמית.',
+                    ttsText: 'אנא הקלידו את שמכם באמצעות מקשי הפלאפון, בין אות לאות הקישו סולמית, ובסיום ההקלדה הקישו כוכבית וסולמית.',
                     mode: 'tap',
                     maxDigits: 60,
                     minDigits: 3,
