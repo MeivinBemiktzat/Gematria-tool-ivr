@@ -486,6 +486,9 @@ async function handleStep(state, query, stateKey, res, did) {
         // שלוחה 2: הקלטת שם -> תמלול -> אישור
         case 'RECORD_NAME': {
             const recordingPath = query[MB.ASK_RECORD_NAME]; // נתיב/URL להקלטה בימות
+            logStep('RECORDING_REFERENCE_RECEIVED', {
+    recordingPath,
+}); 
             if (!recordingPath) {
                 return respond(res, buildRead({
                     mbId: MB.INVALID_INPUT,
@@ -1012,7 +1015,18 @@ async function downloadRecording(recordingRef) {
         throw new Error(`Failed to download recording: HTTP ${response.status}`);
     }
     const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+const buffer = Buffer.from(arrayBuffer);
+
+console.log(JSON.stringify({
+    event: 'RECORDING_DOWNLOADED',
+    url,
+    status: response.status,
+    contentType: response.headers.get('content-type'),
+    bytes: buffer.length,
+    firstBytes: buffer.subarray(0, 32).toString('hex'),
+}));
+
+return buffer;
 }
 
 /**
