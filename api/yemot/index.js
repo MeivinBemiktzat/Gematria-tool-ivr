@@ -1006,27 +1006,54 @@ function safeHost(url) {
  */
 async function downloadRecording(recordingRef) {
     let url = recordingRef;
+
     if (!/^https?:\/\//i.test(recordingRef)) {
-        // אם הוחזר נתיב יחסי - יש לבנות URL מלא להורדה מול שרתי ימות
         url = `https://www.call2all.co.il/ym/api/DownloadFile?path=${encodeURIComponent(recordingRef)}`;
     }
+
     const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to download recording: HTTP ${response.status}`);
-    }
+
+    const contentType = response.headers.get('content-type') || '';
     const arrayBuffer = await response.arrayBuffer();
-const buffer = Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(arrayBuffer);
 
-console.log(JSON.stringify({
-    event: 'RECORDING_DOWNLOADED',
-    url,
-    status: response.status,
-    contentType: response.headers.get('content-type'),
-    bytes: buffer.length,
-    firstBytes: buffer.subarray(0, 32).toString('hex'),
-}));
+    const bodyText = buffer.toString('utf8');
 
-return buffer;
+    console.log(JSON.stringify({
+        event: 'RECORDING_DOWNLOAD_RESPONSE',
+        url,
+        status: response.status,
+        contentType,
+        bytes: buffer.length,
+        firstBytes: buffer.subarray(0, 32).toString('hex'),
+        bodyPreview: contentType.includes('json')
+            ? bodyText.substring(0, 2000)
+            : undefined
+    }));
+
+    if (!response.ok) {
+        throw new Error(
+            `Failed to download recording: HTTP ${response.status}`
+        );
+    }
+
+    if (contentType.toLowerCase().includes('application/json')) {
+        throw new Error(
+            `ימות החזיר JSON במקום קובץ WAV: ${bodyText.substring(0, 1000)}`
+        );
+    }
+
+    if (
+        buffer.length < 12 ||
+        buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+        buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
+    ) {
+        throw new Error(
+            `הקובץ שהתקבל אינו WAV תקין. bytes=${buffer.length}, content-type=${contentType}`
+        );
+    }
+
+    return buffer;
 }
 
 /**
